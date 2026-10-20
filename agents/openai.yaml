@@ -1,0 +1,6 @@
+interface:
+  display_name: "Coder Media Generation"
+  short_description: "Generate images and videos by model group"
+  default_prompt: "Use $coder-media-generation to create or edit an image or generate a video."
+policy:
+  allow_implicit_invocation: true

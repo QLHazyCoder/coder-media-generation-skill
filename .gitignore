@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+generated-image-*
+generated-video-*
+workflow.json
+.env
+.env.*
+credentials.json

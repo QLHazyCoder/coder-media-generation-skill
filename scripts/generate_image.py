@@ -1,0 +1,1132 @@
+#!/usr/bin/env python3
+"""Generate one image through Coder API without exposing API credentials."""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import binascii
+import datetime as dt
+import getpass
+import json
+import os
+import secrets
+import stat
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+from media_catalog import load_public_catalog
+
+
+DEFAULT_BASE_URL = "https://api.qlhazycoder.tech/v1"
+DEFAULT_MODEL = "gpt-image-2"
+MAX_IMAGE_BYTES = 50 * 1024 * 1024
+CONFIG_ENV_VAR = "CODER_MEDIA_CONFIG_PATH"
+LEGACY_CONFIG_ENV_VAR = "CODER_API_CONFIG_PATH"
+WORKFLOW_STATE_VERSION = 2
+MAX_REQUEST_TIMEOUT_SECONDS = 1000
+MAX_GENERATION_ATTEMPTS = 3
+RETRY_DELAYS_SECONDS = (1, 2)
+GPT_IMAGE_2_SIZES = [
+    "auto",
+    "1024x1024",
+    "1024x1536",
+    "1536x1024",
+    "1024x1792",
+    "1792x1024",
+    "2048x2048",
+    "2560x1440",
+    "1440x2560",
+    "3840x2160",
+    "2160x3840",
+]
+GPT_IMAGE_2_SIZE_LABELS = {
+    "auto": "auto (model selected)",
+    "1024x1024": "1024x1024 (1K)",
+    "1024x1536": "1024x1536 (about 1.5K)",
+    "1536x1024": "1536x1024 (about 1.5K)",
+    "1024x1792": "1024x1792 (about 1.8K)",
+    "1792x1024": "1792x1024 (about 1.8K)",
+    "2048x2048": "2048x2048 (2K)",
+    "2560x1440": "2560x1440 (about 2.5K)",
+    "1440x2560": "1440x2560 (about 2.5K)",
+    "3840x2160": "3840x2160 (4K)",
+    "2160x3840": "2160x3840 (4K)",
+}
+GPT_IMAGE_2_CAPABILITIES = {
+    "provider": "openai",
+    "size_mode": "dimensions",
+    "sizes": GPT_IMAGE_2_SIZES,
+    "aspect_ratios": [],
+    "resolutions": [],
+    "qualities": ["auto", "low", "medium", "high"],
+    "output_formats": ["png", "jpeg", "webp"],
+    "default_size": "1024x1024",
+    "default_aspect_ratio": "",
+    "default_resolution": "",
+    "default_quality": "auto",
+    "default_output_format": "png",
+    "supports_editing": True,
+    "supports_moderation": True,
+    "supports_output_compression": True,
+    "max_images": 4,
+}
+
+GEMINI_NATIVE_IMAGE_ASPECT_RATIOS = [
+    "1:1",
+    "1:4",
+    "1:8",
+    "2:3",
+    "3:2",
+    "3:4",
+    "4:1",
+    "4:3",
+    "4:5",
+    "5:4",
+    "8:1",
+    "9:16",
+    "16:9",
+    "21:9",
+]
+GEMINI_NATIVE_IMAGE_RESOLUTIONS = ["1K", "2K", "4K"]
+XAI_IMAGE_ASPECT_RATIOS = [
+    "auto",
+    "1:1",
+    "16:9",
+    "9:16",
+    "4:3",
+    "3:4",
+    "3:2",
+    "2:3",
+    "2:1",
+    "1:2",
+    "19.5:9",
+    "9:19.5",
+    "20:9",
+    "9:20",
+]
+XAI_IMAGE_RESOLUTIONS = ["1K", "2K"]
+XAI_IMAGE_CAPABILITIES = {
+    "provider": "xai",
+    "size_mode": "aspect_ratio_resolution",
+    "sizes": [],
+    "aspect_ratios": XAI_IMAGE_ASPECT_RATIOS,
+    "resolutions": XAI_IMAGE_RESOLUTIONS,
+    "qualities": [],
+    "output_formats": [],
+    "default_size": "",
+    "default_aspect_ratio": "auto",
+    "default_resolution": "1K",
+    "default_quality": "",
+    "default_output_format": "",
+    "supports_editing": False,
+    "supports_moderation": False,
+    "supports_output_compression": False,
+    "max_images": 4,
+}
+
+MODEL_CATALOG: dict[str, dict[str, Any]] = {
+    "gpt-image-2": {
+        "label": "GPT Image 2",
+        "parameter": "size",
+        "options": GPT_IMAGE_2_SIZES,
+        "default": "1024x1024",
+        "option_labels": GPT_IMAGE_2_SIZE_LABELS,
+        "capabilities": GPT_IMAGE_2_CAPABILITIES,
+    },
+    "gpt-image-2.5": {
+        "label": "GPT Image 2.5",
+        "parameter": "size",
+        "options": GPT_IMAGE_2_SIZES,
+        "default": "1024x1024",
+        "option_labels": GPT_IMAGE_2_SIZE_LABELS,
+        "capabilities": GPT_IMAGE_2_CAPABILITIES,
+    },
+    "gpt-image-2.5-flare": {
+        "label": "GPT Image 2.5 Flare",
+        "parameter": "size",
+        "options": GPT_IMAGE_2_SIZES,
+        "default": "1024x1024",
+        "option_labels": GPT_IMAGE_2_SIZE_LABELS,
+        "capabilities": GPT_IMAGE_2_CAPABILITIES,
+    },
+    "gpt-image-2.5-sunburst": {
+        "label": "GPT Image 2.5 Sunburst",
+        "parameter": "size",
+        "options": GPT_IMAGE_2_SIZES,
+        "default": "1024x1024",
+        "option_labels": GPT_IMAGE_2_SIZE_LABELS,
+        "capabilities": GPT_IMAGE_2_CAPABILITIES,
+    },
+    "gemini-3-pro-image-preview": {
+        "label": "Gemini 3 Pro Image Preview",
+        "parameter": "aspect_ratio_resolution",
+        "options": GEMINI_NATIVE_IMAGE_ASPECT_RATIOS,
+        "default": "1:1",
+        "resolution_options": GEMINI_NATIVE_IMAGE_RESOLUTIONS,
+        "default_resolution": "1K",
+        "capabilities": {
+            "provider": "gemini",
+            "size_mode": "aspect_ratio_resolution",
+            "sizes": [],
+            "aspect_ratios": GEMINI_NATIVE_IMAGE_ASPECT_RATIOS,
+            "resolutions": GEMINI_NATIVE_IMAGE_RESOLUTIONS,
+            "qualities": [],
+            "output_formats": [],
+            "default_size": "",
+            "default_aspect_ratio": "1:1",
+            "default_resolution": "1K",
+            "default_quality": "",
+            "default_output_format": "",
+            "supports_editing": False,
+            "supports_moderation": False,
+            "supports_output_compression": False,
+            "max_images": 4,
+        },
+    },
+    "gemini-3.1-flash-image-preview": {
+        "label": "Gemini 3.1 Flash Image Preview",
+        "parameter": "aspect_ratio_resolution",
+        "options": GEMINI_NATIVE_IMAGE_ASPECT_RATIOS,
+        "default": "1:1",
+        "resolution_options": GEMINI_NATIVE_IMAGE_RESOLUTIONS,
+        "default_resolution": "1K",
+        "capabilities": {
+            "provider": "gemini",
+            "size_mode": "aspect_ratio_resolution",
+            "sizes": [],
+            "aspect_ratios": GEMINI_NATIVE_IMAGE_ASPECT_RATIOS,
+            "resolutions": GEMINI_NATIVE_IMAGE_RESOLUTIONS,
+            "qualities": [],
+            "output_formats": [],
+            "default_size": "",
+            "default_aspect_ratio": "1:1",
+            "default_resolution": "1K",
+            "default_quality": "",
+            "default_output_format": "",
+            "supports_editing": False,
+            "supports_moderation": False,
+            "supports_output_compression": False,
+            "max_images": 4,
+        },
+    },
+    "grok-imagine-image-lite": {
+        "label": "Grok Imagine Image Lite",
+        "parameter": "aspect_ratio_resolution",
+        "options": XAI_IMAGE_ASPECT_RATIOS,
+        "default": "auto",
+        "resolution_options": XAI_IMAGE_RESOLUTIONS,
+        "default_resolution": "1K",
+        "capabilities": XAI_IMAGE_CAPABILITIES,
+    },
+    "grok-imagine-image-2.0": {
+        "label": "Grok Imagine Image 2.0",
+        "parameter": "aspect_ratio_resolution",
+        "options": XAI_IMAGE_ASPECT_RATIOS,
+        "default": "auto",
+        "resolution_options": XAI_IMAGE_RESOLUTIONS,
+        "default_resolution": "1K",
+        "capabilities": XAI_IMAGE_CAPABILITIES,
+    },
+}
+
+MIME_EXTENSIONS = {
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
+
+
+class SkillError(Exception):
+    """An error that is safe to return to the agent or user."""
+
+
+class GenerationError(SkillError):
+    """A generation request failure with retry guidance."""
+
+    def __init__(self, message: str, retryable: bool) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+
+
+class RetryExhausted(SkillError):
+    """All allowed generation attempts failed or retrying would be pointless."""
+
+    def __init__(self, attempts: int, last_error: SkillError) -> None:
+        super().__init__(str(last_error))
+        self.attempts = attempts
+        self.last_error = str(last_error)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--list-models", action="store_true", help="print the built-in model catalog")
+    parser.add_argument("--configure", action="store_true", help="save an API key in the local private config")
+    parser.add_argument(
+        "--confirm-local-storage",
+        action="store_true",
+        help="required acknowledgement before --configure writes a local key",
+    )
+    parser.add_argument("--remove-key", action="store_true", help="delete the locally saved API key")
+    parser.add_argument("--show-config-path", action="store_true", help="print the local private config path")
+    parser.add_argument("--begin", action="store_true", help="start an image-generation workflow")
+    parser.add_argument("--save-local-key", action="store_true", help="save a key for a workflow after user confirmation")
+    parser.add_argument("--api-key-stdin", action="store_true", help="read a supplied API key from non-terminal stdin")
+    parser.add_argument(
+        "--select-configuration",
+        action="store_true",
+        help="record a complete model and layout choice for a workflow",
+    )
+    parser.add_argument("--select-model", action="store_true", help="record a model choice for a workflow")
+    parser.add_argument("--select-layout", action="store_true", help="record a layout choice for a workflow")
+    parser.add_argument("--generate", action="store_true", help="generate from a ready workflow")
+    parser.add_argument("--continue-retry", action="store_true", help="start another retry round after user confirmation")
+    parser.add_argument("--state", help="workflow state file returned by --begin")
+    parser.add_argument("--prompt", help="image prompt")
+    parser.add_argument("--image", help="local input image for a GPT Image 2 edit workflow")
+    parser.add_argument("--model", choices=sorted(MODEL_CATALOG), help="explicit model choice")
+    parser.add_argument("--size", help="GPT Image 2 size")
+    parser.add_argument("--aspect-ratio", help="Gemini aspect ratio")
+    parser.add_argument("--resolution", help="Gemini image resolution")
+    parser.add_argument("--output-dir", default=".", help="directory for the generated file")
+    parser.add_argument("--output", help="optional output filename")
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=MAX_REQUEST_TIMEOUT_SECONDS,
+        help=f"per-attempt request timeout in seconds (maximum {MAX_REQUEST_TIMEOUT_SECONDS})",
+    )
+    return parser.parse_args()
+
+
+def model_catalog_for_output(model_names: set[str] | None = None) -> list[dict[str, Any]]:
+    names = set(MODEL_CATALOG) if model_names is None else model_names
+    return [
+        {
+            "model": model,
+            "label": config["label"],
+            "parameter": config["parameter"],
+            "options": config["options"],
+            "display_options": option_display_values(config),
+            "default": config["default"],
+            "resolution_options": config.get("resolution_options", []),
+            "default_resolution": config.get("default_resolution", ""),
+            "capabilities": config["capabilities"],
+        }
+        for model, config in MODEL_CATALOG.items()
+        if model in names
+    ]
+
+
+def option_display_values(config: dict[str, Any]) -> list[dict[str, str]]:
+    labels = config.get("option_labels", {})
+    return [{"value": option, "label": labels.get(option, option)} for option in config["options"]]
+
+
+def build_payload(args: argparse.Namespace) -> dict[str, Any]:
+    if not args.prompt or not args.prompt.strip():
+        raise SkillError("--prompt is required")
+    if not args.model:
+        raise SkillError("--model is required; select a model through the workflow first")
+    if args.timeout <= 0 or args.timeout > MAX_REQUEST_TIMEOUT_SECONDS:
+        raise SkillError(f"--timeout must be between 1 and {MAX_REQUEST_TIMEOUT_SECONDS} seconds")
+
+    model = args.model
+    config = MODEL_CATALOG[model]
+    payload: dict[str, Any] = {
+        "model": model,
+        "prompt": args.prompt.strip(),
+        "n": 1,
+        "response_format": "b64_json",
+    }
+
+    if config["parameter"] == "size":
+        if args.aspect_ratio or args.resolution:
+            raise SkillError(f"{model} uses --size, not --aspect-ratio or --resolution")
+        size = args.size
+        if not size:
+            raise SkillError(f"--size is required for {model}; select a layout through the workflow first")
+        if size not in config["options"]:
+            raise SkillError(f"unsupported size {size!r} for {model}")
+        payload["size"] = size
+        payload["quality"] = "auto"
+        payload["output_format"] = "png"
+        return payload
+
+    if args.size:
+        raise SkillError(f"{model} uses --aspect-ratio and --resolution, not --size")
+    aspect_ratio = args.aspect_ratio
+    if not aspect_ratio:
+        raise SkillError(f"--aspect-ratio is required for {model}; select a layout through the workflow first")
+    if aspect_ratio not in config["options"]:
+        raise SkillError(f"unsupported aspect ratio {aspect_ratio!r} for {model}")
+    resolution = args.resolution
+    if not resolution:
+        raise SkillError(f"--resolution is required for {model}; select a layout through the workflow first")
+    if resolution not in config["resolution_options"]:
+        raise SkillError(f"unsupported resolution {resolution!r} for {model}")
+    payload["aspect_ratio"] = aspect_ratio
+    payload["resolution"] = resolution
+    return payload
+
+
+def api_base_url() -> str:
+    base_url = os.environ.get("CODER_API_BASE_URL", DEFAULT_BASE_URL).strip().rstrip("/")
+    parsed = urllib.parse.urlparse(base_url)
+    if parsed.scheme not in {"https", "http"} or not parsed.netloc:
+        raise SkillError("CODER_API_BASE_URL must be an absolute http(s) URL")
+    if parsed.scheme == "http" and parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+        raise SkillError("CODER_API_BASE_URL must use HTTPS outside local testing")
+    return base_url
+
+
+def local_config_path() -> Path:
+    configured_path = os.environ.get(CONFIG_ENV_VAR, "").strip() or os.environ.get(LEGACY_CONFIG_ENV_VAR, "").strip()
+    if configured_path:
+        return Path(configured_path).expanduser()
+    config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    media_path = config_home / "coder-media-generation" / "credentials.json"
+    legacy_path = config_home / "coder-api-image" / "credentials.json"
+    if media_path.exists() or not legacy_path.exists():
+        return media_path
+    return legacy_path
+
+
+def read_credentials(config_path: Path) -> dict[str, Any]:
+    try:
+        file_info = config_path.lstat()
+        if not stat.S_ISREG(file_info.st_mode) or stat.S_IMODE(file_info.st_mode) & 0o077:
+            raise SkillError("local credential config must be a regular file with permissions 0600")
+        existing = json.loads(config_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, json.JSONDecodeError) as error:
+        raise SkillError(f"local credential config is invalid ({error})") from error
+    if not isinstance(existing, dict):
+        raise SkillError("local credential config must be a JSON object")
+    return existing
+
+
+def write_local_api_key(config_path: Path, api_key: str, scope: str = "image", group: str | None = None) -> None:
+    api_key = api_key.strip()
+    if not api_key or any(char.isspace() for char in api_key):
+        raise SkillError("API key cannot be empty")
+    config = read_credentials(config_path)
+    if scope == "image":
+        config["api_key"] = api_key
+    elif scope == "video":
+        if not group or not group.strip():
+            raise SkillError("a video group is required to save its API key")
+        group_keys = config.get("video_group_api_keys", {})
+        if not isinstance(group_keys, dict):
+            raise SkillError("video group credential map is invalid")
+        group_keys[group] = api_key
+        config["video_group_api_keys"] = group_keys
+    else:
+        raise SkillError("credential scope must be image or video")
+    config_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(config_path.parent, 0o700)
+    temporary_path = config_path.with_name(f".{config_path.name}.{os.getpid()}.tmp")
+    try:
+        descriptor = os.open(temporary_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as config_file:
+            json.dump(config, config_file)
+            config_file.write("\n")
+        os.replace(temporary_path, config_path)
+        os.chmod(config_path, 0o600)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def read_local_api_key(config_path: Path) -> str:
+    config = read_credentials(config_path)
+    api_key = config.get("api_key", "")
+    if not isinstance(api_key, str):
+        raise SkillError("local API key config is invalid; run --configure")
+    return api_key.strip()
+
+
+def read_image_api_key() -> str:
+    api_key = os.environ.get("CODER_IMAGE_API_KEY", "").strip() or os.environ.get("CODER_API_KEY", "").strip()
+    return api_key or read_local_api_key(local_config_path())
+
+
+def read_video_group_api_key(group: str, config_path: Path | None = None) -> str:
+    if not group:
+        raise SkillError("a video group must be selected before looking up its API key")
+    env_map = os.environ.get("CODER_VIDEO_GROUP_API_KEYS_JSON", "").strip()
+    if env_map:
+        try:
+            parsed = json.loads(env_map)
+        except json.JSONDecodeError as error:
+            raise SkillError("CODER_VIDEO_GROUP_API_KEYS_JSON must be a JSON object") from error
+        if not isinstance(parsed, dict):
+            raise SkillError("CODER_VIDEO_GROUP_API_KEYS_JSON must be a JSON object")
+        key = parsed.get(group)
+        if isinstance(key, str) and key.strip():
+            return key.strip()
+    config = read_credentials(config_path or local_config_path())
+    group_keys = config.get("video_group_api_keys", {})
+    if not isinstance(group_keys, dict):
+        raise SkillError("local video group credential map is invalid")
+    key = group_keys.get(group)
+    if isinstance(key, str) and key.strip():
+        return key.strip()
+    raise SkillError(f"no API key is configured for video group {group!r}")
+
+
+def security_reminder() -> str:
+    return (
+        "Security reminder: enable model limits for this key and allow only the models you intend to use. "
+        "Optionally enable an IP allowlist when this Codex machine has a stable public egress IP. "
+        "A changing home or mobile IP can otherwise lock the skill out."
+    )
+
+
+def configure_api_key(config_path: Path, api_key: str, emit_reminder: bool = True, scope: str = "image", group: str | None = None) -> None:
+    api_key = api_key.strip()
+    write_local_api_key(config_path, api_key, scope=scope, group=group)
+    if emit_reminder:
+        print(f"Saved local API key to {config_path}")
+        print(security_reminder())
+
+
+def remove_local_api_key(config_path: Path, scope: str = "image", group: str | None = None) -> None:
+    config = read_credentials(config_path)
+    if scope == "image":
+        if "api_key" not in config:
+            print(f"No image API key was stored at {config_path}")
+            return
+        config.pop("api_key", None)
+    elif scope == "video":
+        if not group:
+            raise SkillError("a video group is required to remove its API key")
+        group_keys = config.get("video_group_api_keys", {})
+        if not isinstance(group_keys, dict):
+            raise SkillError("local video group credential map is invalid")
+        group_keys.pop(group, None)
+        if group_keys:
+            config["video_group_api_keys"] = group_keys
+        else:
+            config.pop("video_group_api_keys", None)
+    else:
+        raise SkillError("credential scope must be image or video")
+    if config:
+        write_private_json(config_path, config)
+    else:
+        config_path.unlink(missing_ok=True)
+    print(f"Removed {scope} API key from {config_path}")
+
+
+def write_private_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temporary_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        descriptor = os.open(temporary_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as state_file:
+            json.dump(payload, state_file, ensure_ascii=False)
+            state_file.write("\n")
+        os.replace(temporary_path, path)
+        os.chmod(path, 0o600)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def create_workflow_state(prompt: str, input_image: str | None = None) -> Path:
+    if not prompt.strip():
+        raise SkillError("--prompt is required with --begin")
+    validated_input_image = validate_edit_input(Path(input_image)) if input_image else None
+    catalog = load_public_catalog(set(MODEL_CATALOG))
+    key_available = bool(os.environ.get("CODER_IMAGE_API_KEY", "").strip() or os.environ.get("CODER_API_KEY", "").strip() or read_local_api_key(local_config_path()))
+    state_directory = Path(tempfile.mkdtemp(prefix="coder-api-image-"))
+    os.chmod(state_directory, 0o700)
+    state_path = state_directory / "workflow.json"
+    state = {
+        "version": WORKFLOW_STATE_VERSION,
+        "prompt": prompt.strip(),
+        "status": "model_selection" if key_available else "key_storage_decision",
+        "local_key_saved": False,
+        "operation": "edit" if validated_input_image else "generate",
+        "catalog": catalog,
+    }
+    if validated_input_image:
+        state["image_path"] = str(validated_input_image)
+    write_private_json(state_path, state)
+    return state_path
+
+
+def remove_workflow_state(state_path: Path) -> None:
+    state_path.unlink(missing_ok=True)
+    temporary_root = Path(tempfile.gettempdir()).resolve()
+    if state_path.parent.parent == temporary_root and state_path.parent.name.startswith("coder-api-image-"):
+        state_path.parent.rmdir()
+
+
+def read_workflow_state(state_path: Path) -> dict[str, Any]:
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as error:
+        raise SkillError("workflow state does not exist; start again with --begin") from error
+    except (OSError, json.JSONDecodeError) as error:
+        raise SkillError(f"workflow state is invalid: {error}") from error
+    if not isinstance(state, dict) or state.get("version") != WORKFLOW_STATE_VERSION:
+        raise SkillError("workflow state is invalid or from an unsupported version")
+    if not isinstance(state.get("prompt"), str) or not isinstance(state.get("status"), str):
+        raise SkillError("workflow state is invalid")
+    return state
+
+
+def require_state_path(args: argparse.Namespace) -> Path:
+    if not args.state:
+        raise SkillError("--state is required for this workflow operation")
+    return Path(args.state).expanduser().resolve()
+
+
+def workflow_result(state_path: Path, state: dict[str, Any]) -> dict[str, Any]:
+    status = state["status"]
+    result: dict[str, Any] = {"state": str(state_path), "status": status, "operation": state.get("operation", "generate")}
+    if status == "key_storage_decision":
+        result.update(
+            {
+                "action": "ask_user_to_confirm_local_key_storage",
+                "security_reminder": security_reminder(),
+            }
+        )
+    elif status == "model_selection":
+        catalog = state.get("catalog", {})
+        available_models = set(catalog.get("image_models", [])) if isinstance(catalog, dict) else set(MODEL_CATALOG)
+        default_model = DEFAULT_MODEL if DEFAULT_MODEL in available_models else None
+        result.update(
+            {
+                "action": "ask_user_to_choose_model_and_layout",
+                "default_model": default_model,
+                "models": model_catalog_for_output(available_models),
+                "catalog_source": catalog.get("source", "bundled_snapshot"),
+                "catalog_warning": catalog.get("warning", ""),
+                "unconfigured_models": catalog.get("unconfigured_image_models", []),
+            }
+        )
+    elif status == "layout_selection":
+        model = state["model"]
+        config = MODEL_CATALOG[model]
+        result.update({
+            "action": "ask_user_to_choose_layout",
+            "model": model,
+            "parameter": config["parameter"],
+            "options": config["options"],
+            "display_options": option_display_values(config),
+            "default": config["default"],
+        })
+        if config["parameter"] == "aspect_ratio_resolution":
+            result.update(
+                {
+                    "resolution_options": config["resolution_options"],
+                    "default_resolution": config["default_resolution"],
+                }
+            )
+    elif status == "ready":
+        result.update({"action": "ready_to_generate", "model": state["model"], "layout": state["layout"]})
+    elif status == "retry_exhausted":
+        result.update(
+            {
+                "action": "ask_user_to_continue_retrying",
+                "attempts": state["last_failure"]["attempts"],
+                "last_error": state["last_failure"]["last_error"],
+            }
+        )
+    else:
+        raise SkillError("workflow state has an unsupported status")
+    return result
+
+
+def save_local_key_for_workflow(args: argparse.Namespace) -> dict[str, Any]:
+    state_path = require_state_path(args)
+    state = read_workflow_state(state_path)
+    if state["status"] != "key_storage_decision":
+        raise SkillError("local key storage is not the next workflow step")
+    api_key = read_key_input(args.api_key_stdin)
+    configure_api_key(local_config_path(), api_key, emit_reminder=False)
+    state["local_key_saved"] = True
+    state["status"] = "model_selection"
+    write_private_json(state_path, state)
+    return workflow_result(state_path, state)
+
+
+def selected_model(state: dict[str, Any], args: argparse.Namespace) -> str:
+    if not args.model:
+        raise SkillError("--model is required")
+    if state.get("operation") == "edit" and args.model != "gpt-image-2":
+        raise SkillError("image editing currently supports gpt-image-2 only")
+    catalog = state.get("catalog", {})
+    allowed_models = catalog.get("image_models") if isinstance(catalog, dict) else None
+    if isinstance(allowed_models, list) and args.model not in allowed_models:
+        raise SkillError(f"{args.model} is not currently listed by the public image catalog")
+    return args.model
+
+
+def read_key_input(from_stdin: bool, prompt: str = "Image group API key (input hidden): ") -> str:
+    if not from_stdin:
+        return getpass.getpass(prompt).strip()
+    if sys.stdin.isatty():
+        raise SkillError("--api-key-stdin requires non-terminal stdin so the key is not echoed")
+    value = sys.stdin.readline(8193)
+    if len(value) > 8192 or not value:
+        raise SkillError("no API key was received on stdin")
+    return value.strip()
+
+
+def selected_layout(model: Any, args: argparse.Namespace) -> dict[str, str]:
+    if model not in MODEL_CATALOG:
+        raise SkillError("workflow state has an invalid model")
+    config = MODEL_CATALOG[model]
+    if config["parameter"] == "size":
+        if args.aspect_ratio or args.resolution:
+            raise SkillError(f"{model} uses --size, not --aspect-ratio or --resolution")
+        if args.size not in config["options"]:
+            raise SkillError(f"unsupported size {args.size!r} for {model}")
+        return {"size": args.size}
+    else:
+        if args.size:
+            raise SkillError(f"{model} uses --aspect-ratio and --resolution, not --size")
+        if args.aspect_ratio not in config["options"]:
+            raise SkillError(f"unsupported aspect ratio {args.aspect_ratio!r} for {model}")
+        if args.resolution not in config["resolution_options"]:
+            raise SkillError(f"unsupported resolution {args.resolution!r} for {model}")
+        return {"aspect_ratio": args.aspect_ratio, "resolution": args.resolution}
+
+
+def select_workflow_configuration(args: argparse.Namespace) -> dict[str, Any]:
+    state_path = require_state_path(args)
+    state = read_workflow_state(state_path)
+    if state["status"] != "model_selection":
+        raise SkillError("model and layout selection is not the next workflow step")
+    model = selected_model(state, args)
+    state["model"] = model
+    state["layout"] = selected_layout(model, args)
+    state["status"] = "ready"
+    write_private_json(state_path, state)
+    return workflow_result(state_path, state)
+
+
+def select_workflow_model(args: argparse.Namespace) -> dict[str, Any]:
+    state_path = require_state_path(args)
+    state = read_workflow_state(state_path)
+    if state["status"] != "model_selection":
+        raise SkillError("model selection is not the next workflow step")
+    state["model"] = selected_model(state, args)
+    state["status"] = "layout_selection"
+    write_private_json(state_path, state)
+    return workflow_result(state_path, state)
+
+
+def select_workflow_layout(args: argparse.Namespace) -> dict[str, Any]:
+    state_path = require_state_path(args)
+    state = read_workflow_state(state_path)
+    if state["status"] != "layout_selection":
+        raise SkillError("layout selection is not the next workflow step")
+    state["layout"] = selected_layout(state.get("model"), args)
+    state["status"] = "ready"
+    write_private_json(state_path, state)
+    return workflow_result(state_path, state)
+
+
+def continue_workflow_retry(args: argparse.Namespace) -> dict[str, Any]:
+    state_path = require_state_path(args)
+    state = read_workflow_state(state_path)
+    if state["status"] != "retry_exhausted":
+        raise SkillError("retry continuation is not the next workflow step")
+    state.pop("last_failure", None)
+    state["status"] = "ready"
+    state["retry_round"] = int(state.get("retry_round", 0)) + 1
+    write_private_json(state_path, state)
+    return workflow_result(state_path, state)
+
+
+def read_api_key() -> str:
+    api_key = read_image_api_key()
+    if api_key:
+        return api_key
+    raise SkillError("no image API key found; configure the image credential or set CODER_IMAGE_API_KEY")
+
+
+def api_error_message(body: bytes) -> str:
+    try:
+        decoded = json.loads(body.decode("utf-8", errors="replace"))
+    except json.JSONDecodeError:
+        return body.decode("utf-8", errors="replace").strip()[:500] or "upstream returned no error body"
+    if isinstance(decoded, dict):
+        error = decoded.get("error")
+        if isinstance(error, dict) and isinstance(error.get("message"), str):
+            return error["message"][:500]
+        if isinstance(decoded.get("message"), str):
+            return decoded["message"][:500]
+    return "upstream returned an unrecognized error response"
+
+
+def post_image_request(
+    endpoint: str,
+    request_data: bytes,
+    content_type: str,
+    api_key: str,
+    timeout: int,
+) -> dict[str, Any]:
+    request = urllib.request.Request(
+        endpoint,
+        data=request_data,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": content_type,
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = response.read(MAX_IMAGE_BYTES + 1)
+    except urllib.error.HTTPError as error:
+        retryable = error.code == 408 or error.code == 409 or error.code == 429 or error.code >= 500
+        raise GenerationError(
+            f"generation failed with HTTP {error.code}: {api_error_message(error.read(8192))}",
+            retryable=retryable,
+        ) from error
+    except urllib.error.URLError as error:
+        raise GenerationError(f"generation request failed: {error.reason}", retryable=True) from error
+    except TimeoutError as error:
+        raise GenerationError("generation request timed out", retryable=True) from error
+
+    if len(body) > MAX_IMAGE_BYTES:
+        raise GenerationError("generation response exceeds the 50 MiB safety limit", retryable=False)
+    try:
+        decoded = json.loads(body)
+    except json.JSONDecodeError as error:
+        raise GenerationError("generation response was not valid JSON", retryable=True) from error
+    if not isinstance(decoded, dict):
+        raise GenerationError("generation response was not an object", retryable=True)
+    return decoded
+
+
+def post_generation(payload: dict[str, Any], api_key: str, base_url: str, timeout: int) -> dict[str, Any]:
+    return post_image_request(
+        f"{base_url}/images/generations",
+        json.dumps(payload).encode("utf-8"),
+        "application/json",
+        api_key,
+        timeout,
+    )
+
+
+def is_local_url(url: str) -> bool:
+    host = urllib.parse.urlparse(url).hostname
+    return host in {"127.0.0.1", "localhost", "::1"}
+
+
+def download_image(url: str, timeout: int, allow_insecure: bool) -> tuple[bytes, str]:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"https", "http"}:
+        raise SkillError("image URL must use http(s)")
+    if parsed.scheme != "https" and not (allow_insecure and is_local_url(url)):
+        raise SkillError("image URL must use HTTPS outside local testing")
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            image_bytes = response.read(MAX_IMAGE_BYTES + 1)
+            mime_type = response.headers.get_content_type()
+    except urllib.error.URLError as error:
+        raise SkillError(f"failed to download generated image: {error.reason}") from error
+    if len(image_bytes) > MAX_IMAGE_BYTES:
+        raise SkillError("downloaded image exceeds the 50 MiB safety limit")
+    return image_bytes, mime_type
+
+
+def inferred_mime_type(image_bytes: bytes, declared_mime_type: str) -> str:
+    if declared_mime_type in MIME_EXTENSIONS:
+        return declared_mime_type
+    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if image_bytes.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if image_bytes.startswith(b"RIFF") and image_bytes[8:12] == b"WEBP":
+        return "image/webp"
+    return "application/octet-stream"
+
+
+def validate_edit_input(input_path: Path) -> Path:
+    resolved_path = input_path.expanduser().resolve()
+    if not resolved_path.is_file():
+        raise SkillError("--image must reference a readable local file")
+    size = resolved_path.stat().st_size
+    if size <= 0 or size > MAX_IMAGE_BYTES:
+        raise SkillError("--image must be between 1 byte and 50 MiB")
+    with resolved_path.open("rb") as input_file:
+        header = input_file.read(12)
+    mime_type = inferred_mime_type(header, "")
+    if mime_type not in {"image/png", "image/jpeg", "image/webp"}:
+        raise SkillError("--image must be a PNG, JPEG, or WebP file")
+    return resolved_path
+
+
+def build_edit_multipart(payload: dict[str, Any], image_path: Path) -> tuple[bytes, str]:
+    image_path = validate_edit_input(image_path)
+    image_bytes = image_path.read_bytes()
+    if len(image_bytes) > MAX_IMAGE_BYTES:
+        raise SkillError("--image exceeds the 50 MiB safety limit")
+    mime_type = inferred_mime_type(image_bytes, "")
+    if mime_type not in {"image/png", "image/jpeg", "image/webp"}:
+        raise SkillError("--image must be a PNG, JPEG, or WebP file")
+    boundary = f"----CoderAPIImageEdit{secrets.token_hex(16)}"
+    body = bytearray()
+
+    def append_field(name: str, value: str) -> None:
+        body.extend(f"--{boundary}\r\n".encode("ascii"))
+        body.extend(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("ascii"))
+        body.extend(value.encode("utf-8"))
+        body.extend(b"\r\n")
+
+    for name, value in payload.items():
+        append_field(name, str(value))
+
+    extension = MIME_EXTENSIONS[mime_type]
+    body.extend(f"--{boundary}\r\n".encode("ascii"))
+    body.extend(
+        f'Content-Disposition: form-data; name="image"; filename="input{extension}"\r\n'.encode("ascii")
+    )
+    body.extend(f"Content-Type: {mime_type}\r\n\r\n".encode("ascii"))
+    body.extend(image_bytes)
+    body.extend(b"\r\n")
+    body.extend(f"--{boundary}--\r\n".encode("ascii"))
+    return bytes(body), f"multipart/form-data; boundary={boundary}"
+
+
+def post_image_edit(payload: dict[str, Any], image_path: Path, api_key: str, base_url: str, timeout: int) -> dict[str, Any]:
+    request_data, content_type = build_edit_multipart(payload, image_path)
+    return post_image_request(f"{base_url}/images/edits", request_data, content_type, api_key, timeout)
+
+
+def unique_output_path(output_dir: Path, output: str | None, extension: str) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if output:
+        requested = Path(output)
+        if requested.name != output:
+            raise SkillError("--output must be a filename, not a path")
+        filename = requested.name if requested.suffix else f"{requested.name}{extension}"
+    else:
+        filename = f"generated-image-{dt.datetime.now(tz=dt.UTC):%Y%m%d-%H%M%S}{extension}"
+    candidate = output_dir / filename
+    index = 1
+    while candidate.exists():
+        candidate = output_dir / f"{Path(filename).stem}-{index}{Path(filename).suffix}"
+        index += 1
+    return candidate
+
+
+def save_first_image(response: dict[str, Any], output_dir: Path, output: str | None, timeout: int, base_url: str) -> tuple[Path, str, str]:
+    data = response.get("data")
+    if not isinstance(data, list) or not data or not isinstance(data[0], dict):
+        raise SkillError("generation response did not contain image data")
+    image_data = data[0]
+    declared_mime_type = image_data.get("mime_type", "")
+    revised_prompt = image_data.get("revised_prompt", "")
+    if not isinstance(declared_mime_type, str):
+        declared_mime_type = ""
+    if not isinstance(revised_prompt, str):
+        revised_prompt = ""
+
+    b64_json = image_data.get("b64_json")
+    if isinstance(b64_json, str) and b64_json:
+        try:
+            image_bytes = base64.b64decode(b64_json, validate=True)
+        except (binascii.Error, ValueError) as error:
+            raise SkillError("generation returned invalid Base64 image data") from error
+        if len(image_bytes) > MAX_IMAGE_BYTES:
+            raise SkillError("decoded image exceeds the 50 MiB safety limit")
+    else:
+        image_url = image_data.get("url")
+        if not isinstance(image_url, str) or not image_url:
+            raise SkillError("generation response did not contain b64_json or url")
+        image_bytes, downloaded_mime_type = download_image(
+            image_url,
+            timeout,
+            urllib.parse.urlparse(base_url).scheme == "http",
+        )
+        if not declared_mime_type:
+            declared_mime_type = downloaded_mime_type
+
+    mime_type = inferred_mime_type(image_bytes, declared_mime_type)
+    extension = MIME_EXTENSIONS.get(mime_type, ".bin")
+    output_path = unique_output_path(output_dir, output, extension)
+    output_path.write_bytes(image_bytes)
+    return output_path.resolve(), mime_type, revised_prompt
+
+
+def generate_with_retries(
+    payload: dict[str, Any],
+    api_key: str,
+    base_url: str,
+    timeout: int,
+    output_dir: Path,
+    output: str | None,
+    edit_image_path: Path | None = None,
+) -> tuple[Path, str, str]:
+    for attempt in range(1, MAX_GENERATION_ATTEMPTS + 1):
+        try:
+            if edit_image_path:
+                response = post_image_edit(payload, edit_image_path, api_key, base_url, timeout)
+            else:
+                response = post_generation(payload, api_key, base_url, timeout)
+        except GenerationError as error:
+            if not error.retryable or attempt == MAX_GENERATION_ATTEMPTS:
+                raise RetryExhausted(attempt, error) from error
+            time.sleep(RETRY_DELAYS_SECONDS[attempt - 1])
+            continue
+
+        try:
+            return save_first_image(response, output_dir, output, timeout, base_url)
+        except SkillError as error:
+            # The upstream may have completed; never submit a duplicate request for a local save/download failure.
+            raise RetryExhausted(attempt, error) from error
+
+    raise AssertionError("generation retry loop terminated unexpectedly")
+
+
+def main() -> int:
+    args = parse_args()
+    try:
+        if args.timeout <= 0 or args.timeout > MAX_REQUEST_TIMEOUT_SECONDS:
+            raise SkillError(f"--timeout must be between 1 and {MAX_REQUEST_TIMEOUT_SECONDS} seconds")
+        operations = [
+            args.list_models,
+            args.configure,
+            args.remove_key,
+            args.show_config_path,
+            args.begin,
+            args.save_local_key,
+            args.select_configuration,
+            args.select_model,
+            args.select_layout,
+            args.generate,
+            args.continue_retry,
+        ]
+        if sum(operations) != 1:
+            raise SkillError("choose exactly one operation")
+        if args.api_key_stdin and not (args.configure or args.save_local_key):
+            raise SkillError("--api-key-stdin is accepted only with --configure or --save-local-key")
+        if args.image and not args.begin:
+            raise SkillError("--image is accepted only when starting a workflow with --begin")
+        if args.list_models:
+            catalog = load_public_catalog(set(MODEL_CATALOG))
+            available_models = set(catalog["image_models"])
+            print(json.dumps({
+                "default_model": DEFAULT_MODEL if DEFAULT_MODEL in available_models else None,
+                "models": model_catalog_for_output(available_models),
+                "catalog_source": catalog["source"],
+                "catalog_warning": catalog["warning"],
+                "unconfigured_models": catalog["unconfigured_image_models"],
+            }, ensure_ascii=False, indent=2))
+            return 0
+        config_path = local_config_path()
+        if args.show_config_path:
+            print(config_path)
+            return 0
+        if args.configure:
+            if not args.confirm_local_storage:
+                raise SkillError("--configure requires --confirm-local-storage")
+            if args.prompt or args.state:
+                raise SkillError("--configure cannot be combined with --prompt or --state")
+            configure_api_key(config_path, read_key_input(args.api_key_stdin), emit_reminder=False)
+            print(json.dumps({"configured": str(config_path), "security_reminder": security_reminder()}, ensure_ascii=False))
+            return 0
+        if args.remove_key:
+            if args.prompt or args.state:
+                raise SkillError("--remove-key cannot be combined with --prompt or --state")
+            remove_local_api_key(config_path)
+            return 0
+        if args.begin:
+            state_path = create_workflow_state(args.prompt or "", args.image)
+            print(json.dumps(workflow_result(state_path, read_workflow_state(state_path)), ensure_ascii=False))
+            return 0
+        if args.save_local_key:
+            print(json.dumps(save_local_key_for_workflow(args), ensure_ascii=False))
+            return 0
+        if args.select_configuration:
+            print(json.dumps(select_workflow_configuration(args), ensure_ascii=False))
+            return 0
+        if args.select_model:
+            print(json.dumps(select_workflow_model(args), ensure_ascii=False))
+            return 0
+        if args.select_layout:
+            print(json.dumps(select_workflow_layout(args), ensure_ascii=False))
+            return 0
+        if args.continue_retry:
+            print(json.dumps(continue_workflow_retry(args), ensure_ascii=False))
+            return 0
+
+        state_path = require_state_path(args)
+        if args.image:
+            raise SkillError("--image is accepted only when starting a workflow with --begin")
+        state = read_workflow_state(state_path)
+        if state["status"] != "ready":
+            raise SkillError(f"workflow is not ready to generate; next step is {state['status']}")
+        layout = state.get("layout")
+        if not isinstance(layout, dict):
+            raise SkillError("workflow state has an invalid layout")
+        generation_args = argparse.Namespace(
+            prompt=state["prompt"],
+            model=state.get("model"),
+            size=layout.get("size"),
+            aspect_ratio=layout.get("aspect_ratio"),
+            resolution=layout.get("resolution"),
+            timeout=args.timeout,
+        )
+        payload = build_payload(generation_args)
+        edit_image_path: Path | None = None
+        if state.get("operation") == "edit":
+            if state.get("model") != "gpt-image-2":
+                raise SkillError("image editing currently supports gpt-image-2 only")
+            image_path = state.get("image_path")
+            if not isinstance(image_path, str):
+                raise SkillError("image edit workflow is missing its input image")
+            edit_image_path = validate_edit_input(Path(image_path))
+        base_url = api_base_url()
+        try:
+            output_path, mime_type, revised_prompt = generate_with_retries(
+                payload,
+                read_api_key(),
+                base_url,
+                args.timeout,
+                Path(args.output_dir),
+                args.output,
+                edit_image_path,
+            )
+        except RetryExhausted as error:
+            state["status"] = "retry_exhausted"
+            state["last_failure"] = {"attempts": error.attempts, "last_error": error.last_error}
+            write_private_json(state_path, state)
+            print(json.dumps(workflow_result(state_path, state), ensure_ascii=False))
+            return 0
+    except SkillError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+
+    result = {
+        "file": str(output_path),
+        "model": payload["model"],
+        "mime_type": mime_type,
+        "operation": state.get("operation", "generate"),
+    }
+    if revised_prompt:
+        result["revised_prompt"] = revised_prompt
+    if state.get("local_key_saved"):
+        result["security_reminder"] = security_reminder()
+    remove_workflow_state(state_path)
+    print(json.dumps(result, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
