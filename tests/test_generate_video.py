@@ -413,7 +413,7 @@ class GenerateVideoTest(unittest.TestCase):
             self.assertEqual(uploaded_url, f"https://api.qlhazycoder.tech/media-upload/{media_id}")
             self.assertEqual(uploaded_id, media_id)
             connect.assert_called_once_with("api.qlhazycoder.tech", timeout=30)
-            connection.putrequest.assert_called_once_with("POST", "/media-upload/upload")
+            connection.putrequest.assert_called_once_with("POST", "/media-upload/upload", skip_host=True)
             headers = {call.args[0]: call.args[1] for call in connection.putheader.call_args_list}
             self.assertEqual(headers["Authorization"], "Bearer test-video-group-key")
             self.assertTrue(headers["Content-Type"].startswith("multipart/form-data; boundary="))

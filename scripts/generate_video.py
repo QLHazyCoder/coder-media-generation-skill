@@ -227,7 +227,7 @@ def upload_media_file(media_path: Path, expected_kind: str, api_key: str, timeou
     suffix = f"\r\n--{boundary}--\r\n".encode("ascii")
     connection = http.client.HTTPSConnection(MEDIA_UPLOAD_HOST, timeout=timeout)
     try:
-        connection.putrequest("POST", parsed.path)
+        connection.putrequest("POST", parsed.path, skip_host=True)
         connection.putheader("Host", MEDIA_UPLOAD_HOST)
         connection.putheader("Accept", "application/json, text/plain")
         connection.putheader("User-Agent", "CoderMediaGenerationSkill/1.0")
