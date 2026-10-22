@@ -395,6 +395,113 @@ class GenerateVideoTest(unittest.TestCase):
             self.assertEqual(state["uploaded_image_url"], uploaded_url)
             video.remove_state(Path(state_path))
 
+    def test_media_upload_streams_file_with_selected_group_key(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            media = Path(directory) / "reference.mp4"
+            media.write_bytes(MP4_BYTES)
+            media_id = "v_0" + "1" * 25
+            response = MagicMock()
+            response.status = 201
+            response.read.return_value = json.dumps({
+                "success": True,
+                "data": {"url": f"https://api.qlhazycoder.tech/media-upload/{media_id}"},
+            }).encode()
+            connection = MagicMock()
+            connection.getresponse.return_value = response
+            with patch.object(video.http.client, "HTTPSConnection", return_value=connection) as connect:
+                uploaded_url, uploaded_id = video.upload_media_file(media, "video", "test-video-group-key", timeout=30)
+            self.assertEqual(uploaded_url, f"https://api.qlhazycoder.tech/media-upload/{media_id}")
+            self.assertEqual(uploaded_id, media_id)
+            connect.assert_called_once_with("api.qlhazycoder.tech", timeout=30)
+            connection.putrequest.assert_called_once_with("POST", "/media-upload/upload")
+            headers = {call.args[0]: call.args[1] for call in connection.putheader.call_args_list}
+            self.assertEqual(headers["Authorization"], "Bearer test-video-group-key")
+            self.assertTrue(headers["Content-Type"].startswith("multipart/form-data; boundary="))
+            sent = b"".join(call.args[0] for call in connection.send.call_args_list)
+            self.assertIn(b'name="file"; filename="reference.mp4"', sent)
+            self.assertIn(MP4_BYTES, sent)
+
+    def test_media_upload_rejects_foreign_or_wrong_kind_urls(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            media = Path(directory) / "reference.mp4"
+            media.write_bytes(MP4_BYTES)
+            for kind, url in (
+                ("video", "https://api.qlhazycoder.tech/media-upload/a_" + "1" * 26),
+                ("video", "https://coderapi.vip/image-upload/m_" + "1" * 26),
+                ("video", "https://api.qlhazycoder.tech/media-upload/v_" + "1" * 26 + "?x=1"),
+            ):
+                response = MagicMock()
+                response.status = 201
+                response.read.return_value = json.dumps({"data": {"url": url}}).encode()
+                connection = MagicMock()
+                connection.getresponse.return_value = response
+                with self.subTest(url=url), patch.object(video.http.client, "HTTPSConnection", return_value=connection):
+                    with self.assertRaises(video.SkillError):
+                        video.upload_media_file(media, kind, "test-video-group-key", timeout=30)
+
+    def test_local_reference_media_is_uploaded_before_submit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            reference_video = Path(directory) / "motion.mp4"
+            reference_audio = Path(directory) / "music.mp3"
+            reference_video.write_bytes(MP4_BYTES)
+            reference_audio.write_bytes(b"ID3" + b"\x00" * 32)
+            begun = self.run_skill(
+                "--begin", "--prompt", "A glass bottle on a table",
+                "--reference-video", str(reference_video),
+                "--reference-audio", str(reference_audio),
+            )
+            self.assertEqual(begun.returncode, 0, begun.stderr)
+            state_path = json.loads(begun.stdout)["state"]
+            configured = self.run_skill(
+                "--select-configuration", "--state", state_path, "--group", "视频-seedance官渠-全分辨率-国内",
+                "--model", "doubao-seedance-2-5-260628", "--seconds", "8", "--resolution", "1080p",
+            )
+            self.assertEqual(configured.returncode, 0, configured.stderr)
+            state = video.read_state(Path(state_path))
+            video_url = "https://api.qlhazycoder.tech/media-upload/v_" + "1" * 26
+            audio_url = "https://api.qlhazycoder.tech/media-upload/a_" + "2" * 26
+            with patch.object(video, "upload_media_file", side_effect=[(video_url, "v_" + "1" * 26), (audio_url, "a_" + "2" * 26)]) as upload, \
+                 patch.object(video, "http_json", return_value={"id": "video-task-1", "status": "queued"}) as submit_request, \
+                 patch.object(video, "api_base_url", return_value="https://api.example/v1"), \
+                 patch.object(video, "read_video_group_api_key", return_value="coder-api-key"):
+                result = video.submit(Path(state_path), state, timeout=30)
+            self.assertEqual(upload.call_args_list[0].args[1], "video")
+            self.assertEqual(upload.call_args_list[1].args[1], "audio")
+            self.assertEqual(upload.call_args_list[0].args[2], "coder-api-key")
+            payload = json.loads(submit_request.call_args.args[3])
+            self.assertEqual(payload["reference_video_urls"], [video_url])
+            self.assertEqual(payload["reference_audio_urls"], [audio_url])
+            self.assertEqual(result["task_id"], "video-task-1")
+            video.remove_state(Path(state_path))
+
+    def test_failed_local_media_upload_never_submits_video_request(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            reference_video = Path(directory) / "motion.mp4"
+            reference_video.write_bytes(MP4_BYTES)
+            begun = self.run_skill(
+                "--begin", "--prompt", "A glass bottle on a table",
+                "--reference-video", str(reference_video),
+            )
+            state_path = json.loads(begun.stdout)["state"]
+            self.run_skill(
+                "--select-configuration", "--state", state_path, "--group", "视频-seedance官渠-全分辨率-国内",
+                "--model", "doubao-seedance-2-5-260628", "--seconds", "8", "--resolution", "1080p",
+            )
+            state = video.read_state(Path(state_path))
+            with patch.object(video, "upload_media_file", side_effect=video.SkillError("media upload rejected")), \
+                 patch.object(video, "http_json") as submit_request, \
+                 patch.object(video, "api_base_url", return_value="https://api.example/v1"), \
+                 patch.object(video, "read_video_group_api_key", return_value="coder-api-key"):
+                with self.assertRaisesRegex(video.SkillError, "media upload rejected"):
+                    video.submit(Path(state_path), state, timeout=30)
+            submit_request.assert_not_called()
+            video.remove_state(Path(state_path))
+
+    def test_publish_requires_file_and_group(self) -> None:
+        result = self.run_skill("--publish")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--publish requires both --file and --group", result.stderr)
+
     def test_public_image_url_is_validated_before_workflow_creation(self) -> None:
         result = self.run_skill("--begin", "--prompt", "animate", "--image-url", "file:///tmp/image.png")
         self.assertNotEqual(result.returncode, 0)

@@ -38,7 +38,7 @@ The existing `new_api_image_upload_key` field, if present in an older config, is
 
 The skill identifies image generation, image editing, or video generation; loads the corresponding catalog; asks one consolidated question for the selected model's required fields; and optionally asks whether the user wants prompt optimization. Optimized candidates require the user's selection before generation. Missing group credentials stop before upload or generation.
 
-Video references use normalized public fields. Local images are multipart only for Grok; other current video adapters convert local images to a validated public URL using the fixed image-upload endpoint. Text-to-video and image/video/audio reference generation all use the standard `/v1/videos` API. Provider-specific conversion stays in the gateway plugin.
+Video references use normalized public fields. Local images are multipart only for Grok; other current video adapters convert local images to a validated public URL using the fixed image-upload endpoint. Local reference videos and audio are converted to public URLs through the fixed media host using the selected video-group key, with per-model reference limits checked before upload and uploaded URLs cached in workflow state. Text-to-video and image/video/audio reference generation all use the standard `/v1/videos` API. Provider-specific conversion stays in the gateway plugin.
 
 Video submission remains at-most-once from the client's perspective. The state is written as `submitting` before POST; uncertain outcomes are never retried automatically. Task polling and same-task content downloads remain resumable. Legacy version-1 states are accepted only for already-submitted tasks and use their original image credential for polling; an old unsubmitted state must restart with an explicit group selection.
 
@@ -69,6 +69,7 @@ Video submission remains at-most-once from the client's perspective. The state i
 | 3 | Refactor image/video clients without losing retry, task recovery, output validation, or legacy image credential | complete | Existing image tests and video task lifecycle tests retained. |
 | 4 | Add twelve verified video capability profiles, reference media, RollDek support, and prompt-confirmation instructions | complete | Unknown models stay non-selectable; video request uses normalized public fields. |
 | 5 | Test, audit public files, initialize new repository, and push | complete | 49 mock/offline tests pass; live catalog read shows five groups; package validator passes; public repo is pushed on `main`. |
+| 6 | Add local reference video/audio upload and explicit generated-MP4 publishing through the media host | complete | Uploads use the selected group key, check model reference limits first, cache URLs in state, stop before billable submissions on failure, and never auto-publish; 54 mock/offline tests pass. |
 
 ## Phase Self-Check
 
@@ -80,6 +81,7 @@ Video submission remains at-most-once from the client's perspective. The state i
 - Existing `api_key` remains the image key. The old upload-key config field is not read or emitted. No credential value is included in source or tests.
 - A previous `api_key` environment override remains image-only. Video automation uses an exact JSON group map, preserving group isolation.
 - Existing image-generation request logic and the at-most-once video submit, status polling, content recovery, and MP4 safety rules remain in place.
+- Local reference media and generated-output publishing use the fixed media host on `api.qlhazycoder.tech`. The selected video-group key is the only upload credential, uploaded URLs are cached by path/size/mtime, and a failed upload never reaches the billable video POST.
 
 ## Final Review
 

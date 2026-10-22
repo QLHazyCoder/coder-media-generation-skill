@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import datetime as dt
 import json
 import os
@@ -45,9 +46,14 @@ MAX_VIDEO_BYTES = 512 * 1024 * 1024
 MAX_JSON_BYTES = 1024 * 1024
 MAX_UPLOAD_RESPONSE_BYTES = 256 * 1024
 MAX_TIMEOUT = 1000
+MAX_MEDIA_UPLOAD_BYTES = 512 * 1024 * 1024
+MEDIA_UPLOAD_TIMEOUT = 300
 TASK_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._~-]{0,255}\Z")
 IMAGE_UPLOAD_ENDPOINT = "https://coderapi.vip/image-upload/upload"
 IMAGE_UPLOAD_URL_PATTERN = re.compile(r"^/image-upload/(m_[0-7][0-9A-HJKMNP-TV-Z]{25})$")
+MEDIA_UPLOAD_ENDPOINT = "https://api.qlhazycoder.tech/media-upload/upload"
+MEDIA_UPLOAD_HOST = "api.qlhazycoder.tech"
+MEDIA_UPLOAD_URL_PATTERN = re.compile(r"^/media-upload/([va]_[0-7][0-9A-HJKMNP-TV-Z]{25})$")
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -66,6 +72,7 @@ def parse_args() -> argparse.Namespace:
     operations.add_argument("--submit", action="store_true")
     operations.add_argument("--attach-task-id", action="store_true")
     operations.add_argument("--poll", action="store_true")
+    operations.add_argument("--publish", action="store_true")
     parser.add_argument("--state", help="video workflow file returned by --begin")
     parser.add_argument("--prompt", help="video prompt (optional when an image is provided)")
     parser.add_argument("--group", help="exact public model group used to select its dedicated API key")
@@ -79,6 +86,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--reference-image-url", action="append", default=[], help="additional public reference image URL; repeat as needed")
     parser.add_argument("--reference-video-url", action="append", default=[], help="public reference video URL; repeat as needed")
     parser.add_argument("--reference-audio-url", action="append", default=[], help="public reference audio URL; repeat as needed")
+    parser.add_argument("--reference-video", action="append", default=[], help="local MP4, WebM, or MOV reference video, at most 512 MiB; repeat as needed")
+    parser.add_argument("--reference-audio", action="append", default=[], help="local MP3, WAV, or M4A reference audio, at most 512 MiB; repeat as needed")
     parser.add_argument("--first-frame-image-url", help="public first-frame image URL")
     parser.add_argument("--last-frame-image-url", help="public last-frame image URL")
     audio = parser.add_mutually_exclusive_group()
@@ -97,6 +106,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--task-id", help="existing public video task ID for manual reconciliation")
     parser.add_argument("--api-key-stdin", action="store_true", help="read a supplied API key from non-terminal stdin")
     parser.add_argument("--output-dir", default=".")
+    parser.add_argument("--file", help="local MP4 file to publish with --publish")
     parser.add_argument("--output", help="optional output filename (must end with .mp4)")
     parser.add_argument("--timeout", type=int, default=60, help="per-request timeout in seconds (1-1000)")
     parser.add_argument("--max-wait", type=int, default=120, help="maximum seconds to wait per --poll call")
@@ -172,6 +182,154 @@ def extract_uploaded_image_url(value: Any, depth: int = 0) -> str | None:
     return None
 
 
+def validate_media_reference(path: str, kind: str) -> Path:
+    media = Path(path).expanduser().resolve()
+    if not media.is_file() or media.stat().st_size <= 0:
+        raise SkillError(f"{kind} reference file does not exist or is empty")
+    if media.stat().st_size > MAX_MEDIA_UPLOAD_BYTES:
+        raise SkillError(f"{kind} reference file must be at most 512 MiB")
+    with media.open("rb") as file:
+        header = file.read(16)
+    if len(header) < 8:
+        raise SkillError(f"{kind} reference file is not a supported media container")
+    if kind == "video":
+        if header[4:8] != b"ftyp" and header[:4] != b"\x1a\x45\xdf\xa3":
+            raise SkillError("video reference file must be MP4, WebM, or MOV")
+    elif kind == "audio":
+        if not (
+            header[:3] == b"ID3"
+            or (header[0] == 0xFF and header[1] & 0xE0 == 0xE0)
+            or (header[:4] == b"RIFF" and header[8:12] == b"WAVE")
+            or header[4:8] == b"ftyp"
+        ):
+            raise SkillError("audio reference file must be MP3, WAV, or M4A")
+    else:
+        raise SkillError("unsupported media reference kind")
+    return media
+
+
+def media_upload_multipart_prefix(boundary: str, filename: str) -> bytes:
+    return (
+        f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+        f"Content-Type: application/octet-stream\r\n\r\n"
+    ).encode("ascii")
+
+
+def upload_media_file(media_path: Path, expected_kind: str, api_key: str, timeout: int) -> tuple[str, str]:
+    media = validate_media_reference(str(media_path), expected_kind)
+    parsed = urllib.parse.urlsplit(MEDIA_UPLOAD_ENDPOINT)
+    if parsed.scheme != "https" or parsed.netloc != MEDIA_UPLOAD_HOST or parsed.query or parsed.fragment:
+        raise SkillError("media upload endpoint is invalid")
+    size = media.stat().st_size
+    boundary = f"----CoderAPIMediaUpload{secrets.token_hex(16)}"
+    filename = "reference.mp4" if expected_kind == "video" else "reference.m4a"
+    prefix = media_upload_multipart_prefix(boundary, filename)
+    suffix = f"\r\n--{boundary}--\r\n".encode("ascii")
+    connection = http.client.HTTPSConnection(MEDIA_UPLOAD_HOST, timeout=timeout)
+    try:
+        connection.putrequest("POST", parsed.path)
+        connection.putheader("Host", MEDIA_UPLOAD_HOST)
+        connection.putheader("Accept", "application/json, text/plain")
+        connection.putheader("User-Agent", "CoderMediaGenerationSkill/1.0")
+        connection.putheader("Content-Type", f"multipart/form-data; boundary={boundary}")
+        connection.putheader("Content-Length", str(len(prefix) + size + len(suffix)))
+        connection.putheader("Authorization", f"Bearer {api_key}")
+        connection.endheaders()
+        connection.send(prefix)
+        with media.open("rb") as file:
+            while True:
+                chunk = file.read(1024 * 1024)
+                if not chunk:
+                    break
+                connection.send(chunk)
+        connection.send(suffix)
+        response = connection.getresponse()
+        response_body = response.read(MAX_UPLOAD_RESPONSE_BYTES + 1)
+        status = response.status
+    except (OSError, TimeoutError) as error:
+        raise SkillError(f"media upload request failed: {str(error).replace(api_key, '[redacted]')}") from error
+    finally:
+        connection.close()
+    if len(response_body) > MAX_UPLOAD_RESPONSE_BYTES:
+        raise SkillError("media upload response exceeds the 256 KiB safety limit")
+    if status < 200 or status >= 300:
+        details = api_error_message(response_body)
+        raise SkillError(f"media upload returned HTTP {status}: {details.replace(api_key, '[redacted]')}")
+    try:
+        decoded: Any = json.loads(response_body)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise SkillError("media upload response is not valid JSON") from error
+    media_url = extract_uploaded_image_url(decoded)
+    if not media_url:
+        raise SkillError("media upload response did not contain a public media URL")
+    media_parsed = urllib.parse.urlsplit(media_url)
+    match = MEDIA_UPLOAD_URL_PATTERN.fullmatch(media_parsed.path)
+    if (
+        media_parsed.scheme != "https"
+        or media_parsed.netloc != MEDIA_UPLOAD_HOST
+        or not match
+        or media_parsed.query
+        or media_parsed.fragment
+    ):
+        raise SkillError("media upload response must contain an api.qlhazycoder.tech media URL with a valid media ID")
+    media_id = match.group(1)
+    expected_prefix = "v_" if expected_kind == "video" else "a_"
+    if not media_id.startswith(expected_prefix):
+        raise SkillError("media upload response returned the wrong media kind")
+    return f"https://{MEDIA_UPLOAD_HOST}/media-upload/{media_id}", media_id
+
+
+def media_fingerprint(media: Path) -> tuple[int, int]:
+    information = media.stat()
+    return information.st_size, information.st_mtime_ns
+
+
+def upload_state_reference_media(path: Path, state: dict[str, Any], api_key: str, timeout: int) -> None:
+    profile = VIDEO_MODEL_CONFIG.get(state.get("model"))
+    if not profile:
+        raise SkillError("video workflow configuration is invalid")
+    local_videos = [Path(value) for value in state.get("reference_video_paths", [])]
+    local_audios = [Path(value) for value in state.get("reference_audio_paths", [])]
+    if profile["adapter"] == "grok" and (local_videos or local_audios):
+        raise SkillError(f"{state['model']} does not accept local reference video or audio uploads")
+    limits = profile.get("reference_limits")
+    if isinstance(limits, dict):
+        video_count = len(state.get("reference_video_urls", [])) + len(local_videos)
+        audio_count = len(state.get("reference_audio_urls", [])) + len(local_audios)
+        if video_count > limits.get("videos", 0) or audio_count > limits.get("audios", 0):
+            raise SkillError(f"{state['model']} does not accept this many local reference media files")
+    uploads = state.setdefault("uploaded_reference_media", {})
+    for kind, paths, url_field in (
+        ("video", local_videos, "reference_video_urls"),
+        ("audio", local_audios, "reference_audio_urls"),
+    ):
+        if not paths:
+            continue
+        uploaded_urls: list[str] = []
+        for media in paths:
+            fingerprint = media_fingerprint(media)
+            cached = uploads.get(str(media))
+            if (
+                isinstance(cached, dict)
+                and cached.get("kind") == kind
+                and (cached.get("size"), cached.get("mtime_ns")) == fingerprint
+                and isinstance(cached.get("url"), str)
+            ):
+                url = cached["url"]
+            else:
+                url, _ = upload_media_file(media, kind, api_key, timeout)
+                uploads[str(media)] = {
+                    "kind": kind,
+                    "url": url,
+                    "size": fingerprint[0],
+                    "mtime_ns": fingerprint[1],
+                }
+                write_private_json(path, state)
+            uploaded_urls.append(url)
+        state[url_field] = list(state.get(url_field, [])) + uploaded_urls
+    write_private_json(path, state)
+
+
 def upload_reference_image(image_path: Path, api_key: str, timeout: int) -> str:
     body, content_type = upload_multipart_payload(image_path, "file")
     headers = {
@@ -231,13 +389,15 @@ def read_state(path: Path) -> dict[str, Any]:
 
 
 def begin(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
-    if not (args.prompt or "").strip() and not args.image and not args.image_url and not args.reference_image_url and not args.reference_video_url and not args.reference_audio_url:
+    if not (args.prompt or "").strip() and not args.image and not args.image_url and not args.reference_image_url and not args.reference_video_url and not args.reference_audio_url and not args.reference_video and not args.reference_audio:
         raise SkillError("a prompt or at least one reference is required for a video")
     image = validate_reference(args.image) if args.image else None
     image_url = validate_public_media_url(args.image_url, "--image-url") if args.image_url else None
     reference_images = [validate_public_media_url(url, "--reference-image-url") for url in args.reference_image_url]
     reference_videos = [validate_public_media_url(url, "--reference-video-url") for url in args.reference_video_url]
     reference_audios = [validate_public_media_url(url, "--reference-audio-url") for url in args.reference_audio_url]
+    reference_video_paths = [validate_media_reference(path, "video") for path in args.reference_video]
+    reference_audio_paths = [validate_media_reference(path, "audio") for path in args.reference_audio]
     first_frame = validate_public_media_url(args.first_frame_image_url, "--first-frame-image-url") if args.first_frame_image_url else None
     last_frame = validate_public_media_url(args.last_frame_image_url, "--last-frame-image-url") if args.last_frame_image_url else None
     if last_frame and not first_frame:
@@ -264,6 +424,10 @@ def begin(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
         state["reference_video_urls"] = reference_videos
     if reference_audios:
         state["reference_audio_urls"] = reference_audios
+    if reference_video_paths:
+        state["reference_video_paths"] = [str(value) for value in reference_video_paths]
+    if reference_audio_paths:
+        state["reference_audio_paths"] = [str(value) for value in reference_audio_paths]
     if first_frame:
         state["first_frame_image_url"] = first_frame
     if last_frame:
@@ -335,8 +499,8 @@ def select_configuration(state: dict[str, Any], args: argparse.Namespace) -> Non
             raise SkillError(f"unsupported aspect ratio for {args.model}; choose {', '.join(ratios)}")
     main_image = bool(state.get("image_path") or state.get("image_url"))
     reference_images = state.get("reference_image_urls", [])
-    reference_videos = state.get("reference_video_urls", [])
-    reference_audios = state.get("reference_audio_urls", [])
+    reference_videos = list(state.get("reference_video_urls", [])) + list(state.get("reference_video_paths", []))
+    reference_audios = list(state.get("reference_audio_urls", [])) + list(state.get("reference_audio_paths", []))
     first_frame = state.get("first_frame_image_url")
     last_frame = state.get("last_frame_image_url")
     if (first_frame or last_frame) and not profile.get("supports_first_last_frames"):
@@ -512,6 +676,7 @@ def submit(path: Path, state: dict[str, Any], timeout: int) -> dict[str, Any]:
     profile = VIDEO_MODEL_CONFIG.get(state.get("model"))
     base_url = api_base_url()
     api_key = api_key_for_state(state)
+    upload_state_reference_media(path, state, api_key, max(timeout, 300))
     resolved_image_url = state.get("uploaded_image_url")
     if profile and profile["adapter"] != "grok" and state.get("image_path"):
         if resolved_image_url:
@@ -651,19 +816,34 @@ def main() -> int:
     try:
         if not 1 <= args.timeout <= MAX_TIMEOUT or args.max_wait < 0 or args.poll_interval < 1:
             raise SkillError("--timeout must be 1-1000; --max-wait >= 0; --poll-interval >= 1")
-        begin_args = (args.prompt, args.image, args.image_url, args.reference_image_url, args.reference_video_url, args.reference_audio_url, args.first_frame_image_url, args.last_frame_image_url)
+        begin_args = (args.prompt, args.image, args.image_url, args.reference_image_url, args.reference_video_url, args.reference_audio_url, args.reference_video, args.reference_audio, args.first_frame_image_url, args.last_frame_image_url)
         if not args.begin and any(value for value in begin_args):
             raise SkillError("prompt and reference inputs are accepted only with --begin")
         selection_args = (args.model, args.seconds, args.resolution, args.aspect_ratio, args.generate_audio, args.watermark, args.return_last_frame, args.seed)
         if not args.select_configuration and any(value is not None for value in selection_args):
             raise SkillError("video model and settings are accepted only with --select-configuration")
-        if args.group and not (args.select_configuration or args.remove_group_key):
-            raise SkillError("--group is accepted only with --select-configuration or --remove-group-key")
+        if args.group and not (args.select_configuration or args.remove_group_key or args.publish):
+            raise SkillError("--group is accepted only with --select-configuration, --remove-group-key, or --publish")
+        if args.file and not args.publish:
+            raise SkillError("--file is accepted only with --publish")
         if not args.attach_task_id and args.task_id is not None:
             raise SkillError("--task-id is accepted only with --attach-task-id")
         if args.api_key_stdin and not args.save_local_key:
             raise SkillError("--api-key-stdin is accepted only with --save-local-key")
-        if args.list_models:
+        if args.publish:
+            if not args.file or not args.group:
+                raise SkillError("--publish requires both --file and --group")
+            media = validate_media_reference(args.file, "video")
+            api_key = read_video_group_api_key(args.group)
+            public_url, media_id = upload_media_file(media, "video", api_key, MEDIA_UPLOAD_TIMEOUT)
+            result = {
+                "media": "video",
+                "file": str(media),
+                "group": args.group,
+                "public_url": public_url,
+                "media_id": media_id,
+            }
+        elif args.list_models:
             catalog = load_public_catalog()
             result = {
                 "media": "video",

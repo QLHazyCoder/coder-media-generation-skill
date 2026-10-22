@@ -16,7 +16,17 @@ The local config is outside the repository, normally `~/.config/coder-media-gene
 }
 ```
 
-The image key is independent. Every exact public video group has a separate entry in `video_group_api_keys`. A missing group entry never falls back to `api_key` or another group's value. An existing legacy `new_api_image_upload_key` field is not read or used by this skill; the selected video-group key also authenticates the fixed image-upload request, which only verifies that the caller is a gateway user.
+The image key is independent. Every exact public video group has a separate entry in `video_group_api_keys`. A missing group entry never falls back to `api_key` or another group's value. An existing legacy `new_api_image_upload_key` field is not read or used by this skill; the selected video-group key also authenticates the fixed image-upload and media-upload requests, which only verify that the caller is a gateway user.
+
+Local reference videos and audio use the fixed media host:
+
+- Endpoint: `POST https://api.qlhazycoder.tech/media-upload/upload`
+- Authentication: `Authorization: Bearer <selected video-group key>`
+- Body: one multipart `file` field, streamed without redirect following
+- Accepted containers: MP4/WebM/MOV video and MP3/WAV/M4A audio, at most 512 MiB per file
+- Accepted response URL: `https://api.qlhazycoder.tech/media-upload/<v_or_a_ULID>` with no query or fragment
+
+Uploaded reference URLs are cached in the workflow state by file path, size, and mtime so an interrupted submission does not upload the same file twice. A failed upload stops before the billable video POST. `--publish --file <mp4> --group <exact group>` publishes an already downloaded local video through the same endpoint and returns its public URL; it is always explicit and never retries a task.
 
 Environment overrides are scoped: `CODER_IMAGE_API_KEY` (or legacy `CODER_API_KEY`) is image-only. `CODER_VIDEO_GROUP_API_KEYS_JSON` may provide an exact JSON map of video group names to keys. Never store a key in a workflow state, argument, source file, log, or repository.
 

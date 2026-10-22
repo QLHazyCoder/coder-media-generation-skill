@@ -62,14 +62,17 @@ This skill cannot open a native question UI. Ask required questions in the curre
 
 ## Video Workflow
 
-1. Begin with a prompt, a local image, a public image URL, or reference media URLs. The client validates every URL and local image before submission.
+1. Begin with a prompt, a local image, a public image URL, reference media URLs, or local reference video/audio files. The client validates every URL and local file before submission.
 
    ```bash
    python3 scripts/generate_video.py --begin --prompt "<prompt>"
    python3 scripts/generate_video.py --begin --prompt "<prompt>" --image "/absolute/path/reference.png"
    python3 scripts/generate_video.py --begin --prompt "<prompt>" --image-url "https://images.example/reference.png"
    python3 scripts/generate_video.py --begin --prompt "<prompt>" --reference-video-url "https://media.example/reference.mp4" --reference-audio-url "https://media.example/music.mp3"
+   python3 scripts/generate_video.py --begin --prompt "<prompt>" --reference-video "/absolute/path/reference.mp4" --reference-audio "/absolute/path/music.mp3"
    ```
+
+   Local reference videos (MP4, WebM, MOV) and audio files (MP3, WAV, M4A) may be at most 512 MiB each. They are uploaded to the fixed media host only at `--submit` time, after the selected model's reference limits have been checked; upload or validation failure stops before the billable video request.
 
 2. From the returned catalog, have the user choose an exact public group and one model available in that group. Use the model profile for duration range, resolution, ratio choices, supported references, and optional fields. A ratio list is a strict allowed set; `passthrough` means the gateway accepts a non-empty string but this skill has no verified enum to suggest, so ask the user what exact ratio to send. Never substitute another group's key if the chosen group's key is missing. For an unconfigured model, stop and explain that its request contract has not been verified.
 
@@ -79,13 +82,21 @@ This skill cannot open a native question UI. Ask required questions in the curre
    python3 scripts/generate_video.py --save-local-key --state <state>
    ```
 
-   The key is read by a hidden PTY prompt and stored under that exact group. The local image-upload endpoint is only an identity check for a user of the gateway: local image uploads reuse this same selected video-group key. There is no separate image-upload credential. Grok sends a local image as multipart directly to the video endpoint; other configured adapters upload it to the fixed image host first and send the resulting public URL. A caller-supplied public image URL skips upload.
+   The key is read by a hidden PTY prompt and stored under that exact group. The local image-upload and media-upload endpoints are only identity checks for a user of the gateway: local image, video, and audio uploads reuse this same selected video-group key. There is no separate upload credential. Grok sends a local image as multipart directly to the video endpoint; other configured adapters upload it to the fixed image host first and send the resulting public URL. Local reference videos and audio are uploaded to the fixed media host at `https://api.qlhazycoder.tech/media-upload/upload`. A caller-supplied public URL skips upload.
 
 4. After the state is `ready`, run `--submit --state <state>` exactly once. A successful submission returns a public task ID. Poll the same ID with `--poll --state <state> --output-dir <directory>`; polling calls are bounded and may be repeated. Downloaded content must pass MP4 validation and is never allowed to overwrite an existing file.
 
 5. Never automatically retry a video POST after a timeout, network failure, `429`, `5xx`, interruption, invalid response, or missing task ID. The upstream may have accepted and billed the request. Keep the uncertain state, find the task ID in gateway history, then attach it with `--attach-task-id`; if no ID is found, report the uncertain outcome and request fresh authorization before a new submission. A definite client-side validation rejection can be corrected before another submit.
 
 6. Report the exact group, model, task ID, and local MP4 path. Do not disclose bearer keys or upstream media URLs.
+
+7. To publish an already downloaded MP4 to the media host, use an explicit command after the user asks for a public URL. Publishing never submits or retries a video task.
+
+   ```bash
+   python3 scripts/generate_video.py --publish --file "/absolute/path/generated.mp4" --group "<exact public group>"
+   ```
+
+   The command uses that exact group's saved key, accepts one local MP4/WebM/MOV file up to 512 MiB, and returns a `public_url` on `api.qlhazycoder.tech`. It is not run automatically after `--poll`.
 
 ## References
 
