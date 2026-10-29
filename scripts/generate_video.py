@@ -80,7 +80,7 @@ def parse_args() -> argparse.Namespace:
     references.add_argument("--image", help="local PNG, JPEG, or WebP reference image, at most 20 MiB")
     references.add_argument("--image-url", help="public HTTP(S) reference image URL for ZeeQi video models")
     parser.add_argument("--model", choices=sorted(VIDEO_MODELS))
-    parser.add_argument("--seconds", type=int, help="video duration in seconds; range depends on the selected model")
+    parser.add_argument("--seconds", type=int, help="video duration in seconds; range depends on the selected model; -1 is allowed only when the model supports automatic duration")
     parser.add_argument("--resolution", help="480p, 720p, or 1080p where supported")
     parser.add_argument("--aspect-ratio", help="optional ratio; allowed values depend on the model")
     parser.add_argument("--reference-image-url", action="append", default=[], help="additional public reference image URL; repeat as needed")
@@ -98,6 +98,10 @@ def parse_args() -> argparse.Namespace:
     watermark.add_argument("--watermark", dest="watermark", action="store_true")
     watermark.add_argument("--no-watermark", dest="watermark", action="store_false")
     parser.set_defaults(watermark=None)
+    prompt_extend = parser.add_mutually_exclusive_group()
+    prompt_extend.add_argument("--prompt-extend", dest="prompt_extend", action="store_true")
+    prompt_extend.add_argument("--no-prompt-extend", dest="prompt_extend", action="store_false")
+    parser.set_defaults(prompt_extend=None)
     last_frame_output = parser.add_mutually_exclusive_group()
     last_frame_output.add_argument("--return-last-frame", dest="return_last_frame", action="store_true")
     last_frame_output.add_argument("--no-return-last-frame", dest="return_last_frame", action="store_false")
@@ -487,7 +491,8 @@ def select_configuration(state: dict[str, Any], args: argparse.Namespace) -> Non
         raise SkillError("choose an explicit video model from --list-models")
     profile = VIDEO_MODEL_CONFIG[args.model]
     duration = profile["duration"]
-    if args.seconds is None or not duration["min"] <= args.seconds <= duration["max"]:
+    supports_auto_duration = bool(profile.get("supports_auto_duration"))
+    if args.seconds is None or (args.seconds == -1 and not supports_auto_duration) or (args.seconds != -1 and not duration["min"] <= args.seconds <= duration["max"]):
         raise SkillError(f"--seconds must be an integer between {duration['min']} and {duration['max']} for {args.model}")
     if args.resolution not in VIDEO_MODELS[args.model]:
         raise SkillError(f"unsupported resolution for {args.model}; choose {', '.join(VIDEO_MODELS[args.model])}")
@@ -540,6 +545,10 @@ def select_configuration(state: dict[str, Any], args: argparse.Namespace) -> Non
         if "watermark" not in profile.get("optional_parameters", []):
             raise SkillError(f"{args.model} does not declare watermark as a supported option")
         settings["watermark"] = args.watermark
+    if args.prompt_extend is not None:
+        if "prompt_extend" not in profile.get("optional_parameters", []):
+            raise SkillError(f"{args.model} does not declare prompt_extend as a supported option")
+        settings["prompt_extend"] = args.prompt_extend
     if args.return_last_frame is not None:
         if "return_last_frame" not in profile.get("optional_parameters", []):
             raise SkillError(f"{args.model} does not declare return_last_frame as a supported option")
@@ -566,7 +575,8 @@ def request_payload(state: dict[str, Any], resolved_image_url: str | None = None
     seconds, resolution = settings.get("seconds"), settings.get("resolution")
     profile = VIDEO_MODEL_CONFIG[model]
     duration = profile["duration"]
-    if not isinstance(seconds, int) or isinstance(seconds, bool) or not duration["min"] <= seconds <= duration["max"] or resolution not in VIDEO_MODELS[model]:
+    supports_auto_duration = bool(profile.get("supports_auto_duration"))
+    if not isinstance(seconds, int) or isinstance(seconds, bool) or (seconds == -1 and not supports_auto_duration) or (seconds != -1 and not duration["min"] <= seconds <= duration["max"]) or resolution not in VIDEO_MODELS[model]:
         raise SkillError("video workflow configuration is invalid")
     adapter = profile["adapter"]
     if adapter != "grok" and state.get("image_path") and not resolved_image_url:
@@ -597,7 +607,7 @@ def request_payload(state: dict[str, Any], resolved_image_url: str | None = None
         if isinstance(ratios, list) and ratio not in ratios:
             raise SkillError("video workflow aspect ratio is invalid")
         payload["aspect_ratio"] = ratio
-    for field in ("generate_audio", "watermark", "return_last_frame", "seed"):
+    for field in ("generate_audio", "watermark", "prompt_extend", "return_last_frame", "seed"):
         if field in settings:
             payload[field] = settings[field]
     return payload
@@ -819,7 +829,7 @@ def main() -> int:
         begin_args = (args.prompt, args.image, args.image_url, args.reference_image_url, args.reference_video_url, args.reference_audio_url, args.reference_video, args.reference_audio, args.first_frame_image_url, args.last_frame_image_url)
         if not args.begin and any(value for value in begin_args):
             raise SkillError("prompt and reference inputs are accepted only with --begin")
-        selection_args = (args.model, args.seconds, args.resolution, args.aspect_ratio, args.generate_audio, args.watermark, args.return_last_frame, args.seed)
+        selection_args = (args.model, args.seconds, args.resolution, args.aspect_ratio, args.generate_audio, args.watermark, args.prompt_extend, args.return_last_frame, args.seed)
         if not args.select_configuration and any(value is not None for value in selection_args):
             raise SkillError("video model and settings are accepted only with --select-configuration")
         if args.group and not (args.select_configuration or args.remove_group_key or args.publish):

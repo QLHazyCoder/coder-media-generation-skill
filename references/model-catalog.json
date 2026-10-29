@@ -21,6 +21,7 @@
       "seedance-2.0-fast-offical",
       "seedance-2.0-mini-offical",
       "seedance-2.0-offical",
+      "wan3.0-official",
       "doubao-seedance-2-0-260128",
       "doubao-seedance-2-0-fast-260128",
       "doubao-seedance-2-0-mini-260615",
@@ -142,6 +143,22 @@
       "prompt_required_without_image": true,
       "prompt_required_with_image": true,
       "optional_parameters": ["generate_audio", "seed", "return_last_frame"]
+    },
+    "wan3.0-official": {
+      "adapter": "zhiqi",
+      "upstream_model": "wan3.0-yuanlian",
+      "duration": { "min": 2, "max": 30 },
+      "supports_auto_duration": true,
+      "resolutions": ["480p", "720p", "1080p"],
+      "aspect_ratios": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+      "reference_limits": { "images": 10, "videos": 5, "audios": 5 },
+      "local_image_input": "upload_to_public_url",
+      "supports_reference_images": true,
+      "supports_reference_videos": true,
+      "supports_reference_audios": true,
+      "prompt_required_without_image": true,
+      "prompt_required_with_image": true,
+      "optional_parameters": ["generate_audio", "prompt_extend", "watermark", "seed"]
     },
     "doubao-seedance-2-0-260128": {
       "adapter": "rolldek",

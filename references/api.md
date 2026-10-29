@@ -40,7 +40,7 @@ The last verified public catalog contained these five video groups:
 
 | Public group | Public video models in that group |
 | --- | --- |
-| `视频模型` | `grok-imagine-video`, `grok-imagine-video-1.5`, `H3`, `seedance-2.0`, `seedance-2.5`, `seedance-2.0-fast-offical`, `seedance-2.0-mini-offical`, `seedance-2.0-offical`, `doubao-seedance-2-0-260128`, `doubao-seedance-2-0-fast-260128`, `doubao-seedance-2-0-mini-260615`, `doubao-seedance-2-5-260628` |
+| `视频模型` | `grok-imagine-video`, `grok-imagine-video-1.5`, `H3`, `seedance-2.0`, `seedance-2.5`, `seedance-2.0-fast-offical`, `seedance-2.0-mini-offical`, `seedance-2.0-offical`, `wan3.0-official`, `doubao-seedance-2-0-260128`, `doubao-seedance-2-0-fast-260128`, `doubao-seedance-2-0-mini-260615`, `doubao-seedance-2-5-260628` |
 | `seedance官渠 720&1080p 国内` | Four `doubao-seedance-*` models listed below |
 | `视频-seedance官渠-全分辨率-国内` | Four `doubao-seedance-*` models listed below |
 | `seedance官渠 全分辨率 海外版` | Four `doubao-seedance-*` models listed below |
@@ -65,6 +65,7 @@ The four models shared by the latter groups are `doubao-seedance-2-0-260128`, `d
 - RollDek profiles use JSON public URLs; local image files are uploaded first because the adapter does not accept local multipart. ZeeQi profiles also use a public URL for local images. Grok accepts a local image as multipart. Upload uses the same selected video-group key as the video request; the token is sent only to the fixed upload endpoint and the configured gateway host.
 - Supported parameter values and confirmed per-model duration/reference limits are in `model-catalog.json`. Do not infer options from names, pricing expressions, or another model's profile.
 - The two base ZeeQi Seedance profiles pass `aspect_ratio` through as a non-empty string because the installed adapter does not declare an enum for them. For those models, ask the user for an exact value rather than inventing a list. Official ZeeQi and H3 profiles use an explicit five-value ratio enum; Grok and RollDek use their profile-specific enums.
+- `wan3.0-official` is the public alias for ZeeQi's `wan3.0-yuanlian` upstream model. It accepts 2–30 seconds, `-1` for automatic duration, 480p/720p/1080p, the seven documented ratios (`adaptive`, `21:9`, `16:9`, `4:3`, `1:1`, `3:4`, `9:16`), up to 10 images/5 videos/5 audio references, and the optional `prompt_extend`, `watermark`, `generate_audio`, and `seed` fields.
 
 ## Task Safety
 

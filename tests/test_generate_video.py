@@ -164,8 +164,9 @@ class GenerateVideoTest(unittest.TestCase):
         self.assertEqual(catalog.returncode, 0)
         catalog_data = json.loads(catalog.stdout)
         video_group = next(item for item in catalog_data["groups"] if item["group"] == "视频模型")
-        self.assertEqual(len(video_group["models"]), 12)
+        self.assertEqual(len(video_group["models"]), 13)
         self.assertIn("doubao-seedance-2-0-260128", video_group["models"])
+        self.assertIn("wan3.0-official", video_group["models"])
         self.assertEqual(catalog_data["model_profiles"]["grok-imagine-video"]["resolutions"], ["480p", "720p"])
         self.assertEqual(catalog_data["model_profiles"]["seedance-2.0"]["duration"], {"min": 5, "max": 15})
         self.assertEqual(catalog_data["model_profiles"]["seedance-2.5"]["local_image_input"], "upload_to_public_url")
@@ -270,6 +271,30 @@ class GenerateVideoTest(unittest.TestCase):
             "prompt": "Animate the reference image",
             "aspect_ratio": "16:9",
             "generate_audio": True,
+        })
+        video.remove_state(Path(state_path))
+
+    def test_wan_model_accepts_auto_duration_and_model_options(self) -> None:
+        begun = self.run_skill("--begin", "--prompt", "A paper boat on a quiet lake")
+        self.assertEqual(begun.returncode, 0, begun.stderr)
+        state_path = json.loads(begun.stdout)["state"]
+        configured = self.run_skill(
+            "--select-configuration", "--state", state_path, "--group", "视频模型", "--model", "wan3.0-official",
+            "--seconds", "-1", "--resolution", "720p", "--aspect-ratio", "adaptive",
+            "--generate-audio", "--prompt-extend", "--no-watermark",
+        )
+        self.assertEqual(configured.returncode, 0, configured.stderr)
+        submitted = self.run_skill("--submit", "--state", state_path)
+        self.assertEqual(submitted.returncode, 0, submitted.stderr)
+        self.assertEqual(MockVideoAPI.submitted[0], {
+            "model": "wan3.0-official",
+            "duration": -1,
+            "resolution": "720p",
+            "prompt": "A paper boat on a quiet lake",
+            "aspect_ratio": "adaptive",
+            "generate_audio": True,
+            "watermark": False,
+            "prompt_extend": True,
         })
         video.remove_state(Path(state_path))
 

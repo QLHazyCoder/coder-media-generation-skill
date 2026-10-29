@@ -16,7 +16,7 @@ The public pricing page is a client-rendered SPA. Its unauthenticated `/api/pric
 - Filter video models by `openai-video` and image models by `image-generation`.
 - Map exact public group names to models, then intersect with `model-catalog.json` profiles.
 - Show newly listed groups immediately, even when they use a previously configured model.
-- Show newly listed models as unconfigured until their request contract and limits are verified.
+- Show newly listed models as unconfigured until their request contract and limits are verified. The verified Wan public alias is included only after its upstream mapping and limits are checked.
 - If the public catalog is unavailable, use the bundled five-group snapshot and clearly mark it as potentially stale.
 
 ### Credential Routing
@@ -49,9 +49,9 @@ Video submission remains at-most-once from the client's perspective. The state i
 | `SKILL.md` | Skill selection metadata and user-facing image/video workflows, group-key routing, prompt confirmation, and billable-call safeguards. |
 | `agents/openai.yaml` | Codex display name and automatic invocation metadata. |
 | `scripts/generate_image.py` | Image generation/edit flow, layout validation, image credential storage, and backward-compatible credential-path selection. |
-| `scripts/generate_video.py` | Dynamic group selection, exact per-group key use, 12 verified video profiles, references, video task state, polling, recovery, and MP4 download. |
+| `scripts/generate_video.py` | Dynamic group selection, exact per-group key use, 13 verified video profiles, references, automatic-duration validation, video task state, polling, recovery, and MP4 download. |
 | `scripts/media_catalog.py` | Bounded public catalog fetch, image/video endpoint filtering, live group mapping, unknown-model quarantine, and offline snapshot fallback. |
-| `references/model-catalog.json` | Verified model parameter profiles and the current five-group offline snapshot; no price values or credentials. |
+| `references/model-catalog.json` | Verified model parameter profiles, including `wan3.0-official` mapped to `wan3.0-yuanlian`, and the current five-group offline snapshot; no price values or credentials. |
 | `references/api.md` | Gateway endpoints, credential schema, group mapping, image upload behavior, and task recovery contract. |
 | `references/design-and-verification.md` | This architecture, ownership boundaries, implementation checklist, and audit record. |
 | `tests/test_generate_image.py` | Image compatibility, credential permissions, image behavior, and workflow tests. |
@@ -67,14 +67,14 @@ Video submission remains at-most-once from the client's perspective. The state i
 | 1 | Inspect installed image/video clients, public catalog response, and deployed adapter contracts | complete | Used the installed skill as source because the previous public skill repository was older. |
 | 2 | Design dynamic group-to-model catalog and per-scope credentials | complete | Five current video groups each map to an independent key; image key remains separate. |
 | 3 | Refactor image/video clients without losing retry, task recovery, output validation, or legacy image credential | complete | Existing image tests and video task lifecycle tests retained. |
-| 4 | Add twelve verified video capability profiles, reference media, RollDek support, and prompt-confirmation instructions | complete | Unknown models stay non-selectable; video request uses normalized public fields. |
+| 4 | Add thirteen verified video capability profiles, reference media, RollDek support, automatic-duration validation, and prompt-confirmation instructions | complete | Unknown models stay non-selectable; Wan uses its public alias and verified upstream capability profile. |
 | 5 | Test, audit public files, initialize new repository, and push | complete | 49 mock/offline tests pass; live catalog read shows five groups; package validator passes; public repo is pushed on `main`. |
 | 6 | Add local reference video/audio upload and explicit generated-MP4 publishing through the media host | complete | Uploads use the selected group key, check model reference limits first, cache URLs in state, stop before billable submissions on failure, and never auto-publish; 54 mock/offline tests pass. |
 
 ## Phase Self-Check
 
 - Public catalog was checked on 2026-10-20. It exposed five `openai-video` groups and twelve distinct supported video model IDs. The four Seedance public groups each exposed the same four `doubao-seedance-*` names; the `视频模型` group exposed all twelve.
-- Video parameters come from the locally installed Grok, ZeeQi, and RollDek plugin contracts. RollDek's four model profiles are included without inventing a reference-media count limit. H3 has its own 720p-only and reference limits. ZeeQi duration ranges use plugin limits rather than a generic 1-3600 range.
+- Video parameters come from the locally installed Grok, ZeeQi, and RollDek plugin contracts. RollDek's four model profiles are included without inventing a reference-media count limit. H3 has its own 720p-only and reference limits. Wan uses the public `wan3.0-official` alias, upstream `wan3.0-yuanlian`, 2–30 seconds, `-1` automatic duration, seven ratios, and 10/5/5 reference limits. ZeeQi duration ranges use plugin limits rather than a generic 1-3600 range.
 - Group names are treated as identifiers from a public catalog, not instructions. Prices and billing expressions are discarded. The skill does not change gateway prices or model metadata.
 - New video credentials are keyed by exact group name. A missing selected group key cannot fall back to another group's key. Image upload receives the current selected video key only for gateway-user validation.
 - Live catalog verification on 2026-10-20 returned five groups: four Seedance groups with four models each, and `视频模型` with twelve models. The current image catalog returned eight configured profiles and surfaced two additional image models as unconfigured; they cannot be submitted until capabilities are verified.
