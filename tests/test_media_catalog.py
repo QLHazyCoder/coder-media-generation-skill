@@ -31,6 +31,12 @@ class MediaCatalogTest(unittest.TestCase):
                     "supported_endpoint_types": ["image-generation"],
                     "enable_groups": ["image"],
                 },
+                {
+                    "model_name": "speech-2.8",
+                    "supported_endpoint_types": ["audio-speech", "openai"],
+                    "enable_groups": ["音频模型"],
+                    "billing_expr": "must not be returned",
+                },
             ]
         }
         catalog = media_catalog.catalog_from_payload(payload, {"gpt-image-2"})
@@ -39,6 +45,8 @@ class MediaCatalogTest(unittest.TestCase):
         self.assertEqual(groups["新增公开视频组"]["models"], ["grok-imagine-video"])
         self.assertEqual(groups["新增公开视频组"]["unconfigured_models"], ["future-video-model"])
         self.assertEqual(catalog["image_models"], ["gpt-image-2"])
+        audio_groups = media_catalog.audio_groups_by_name(catalog)
+        self.assertEqual(audio_groups["音频模型"]["models"], ["speech-2.8"])
         self.assertNotIn("billing_expr", str(catalog))
 
     def test_bundled_snapshot_has_five_exact_video_group_profiles(self) -> None:
@@ -68,6 +76,13 @@ class MediaCatalogTest(unittest.TestCase):
         }
         catalog = media_catalog.catalog_from_payload(payload, set())
         self.assertEqual([group["group"] for group in catalog["video_groups"]], ["valid"])
+
+    def test_bundled_snapshot_contains_audio_group(self) -> None:
+        capabilities = media_catalog.load_capabilities()
+        catalog = media_catalog._fallback_catalog(capabilities, set(capabilities["image_models"]), "offline")
+        groups = media_catalog.audio_groups_by_name(catalog)
+        self.assertEqual(set(groups), {"音频模型"})
+        self.assertEqual(len(groups["音频模型"]["models"]), 6)
 
 
 if __name__ == "__main__":

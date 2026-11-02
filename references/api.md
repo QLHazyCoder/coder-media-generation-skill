@@ -9,6 +9,9 @@ The local config is outside the repository, normally `~/.config/coder-media-gene
 ```json
 {
   "api_key": "<image-generation-key>",
+  "audio_group_api_keys": {
+    "音频模型": "<key-for-this-exact-group>"
+  },
   "video_group_api_keys": {
     "视频模型": "<key-for-this-exact-group>",
     "seedance官渠 720p 海外版": "<key-for-this-exact-group>"
@@ -17,6 +20,8 @@ The local config is outside the repository, normally `~/.config/coder-media-gene
 ```
 
 The image key is independent. Every exact public video group has a separate entry in `video_group_api_keys`. A missing group entry never falls back to `api_key` or another group's value. An existing legacy `new_api_image_upload_key` field is not read or used by this skill; the selected video-group key also authenticates the fixed image-upload and media-upload requests, which only verify that the caller is a gateway user.
+
+Every exact public audio group has a separate entry in `audio_group_api_keys`. A missing audio group entry never falls back to the image key or a video-group key. `CODER_AUDIO_GROUP_API_KEYS_JSON` provides the same exact-name mapping for automation.
 
 Local reference videos and audio use the fixed media host:
 
@@ -28,7 +33,7 @@ Local reference videos and audio use the fixed media host:
 
 Uploaded reference URLs are cached in the workflow state by file path, size, and mtime so an interrupted submission does not upload the same file twice. A failed upload stops before the billable video POST. `--publish --file <mp4> --group <exact group>` publishes an already downloaded local video through the same endpoint and returns its public URL; it is always explicit and never retries a task.
 
-Environment overrides are scoped: `CODER_IMAGE_API_KEY` (or legacy `CODER_API_KEY`) is image-only. `CODER_VIDEO_GROUP_API_KEYS_JSON` may provide an exact JSON map of video group names to keys. Never store a key in a workflow state, argument, source file, log, or repository.
+Environment overrides are scoped: `CODER_IMAGE_API_KEY` (or legacy `CODER_API_KEY`) is image-only. `CODER_AUDIO_GROUP_API_KEYS_JSON` and `CODER_VIDEO_GROUP_API_KEYS_JSON` provide exact JSON maps of audio or video group names to keys. Never store a key in a workflow state, argument, source file, log, or repository.
 
 If a user gives a key in chat, pass it through non-terminal stdin to `--api-key-stdin`; never include it as a command argument. A video key save operation is associated with the already selected group and updates only that entry.
 
@@ -48,12 +53,22 @@ The last verified public catalog contained these five video groups:
 
 The four models shared by the latter groups are `doubao-seedance-2-0-260128`, `doubao-seedance-2-0-fast-260128`, `doubao-seedance-2-0-mini-260615`, and `doubao-seedance-2-5-260628`. This table is an offline fallback snapshot, not a replacement for live group discovery.
 
+The current audio fallback group is `音频模型`. Its verified models are `Suno v5.5`, `suno_music`, `suno-v6-mini`, `suno-v6-wild`, `gemini-3.1-flash-tts`, and `speech-2.8`. Live catalog membership remains authoritative.
+
 ## Image Requests
 
 - Generate: `POST /images/generations` with the exact selected model and its catalog-defined layout fields.
 - Edit: `POST /images/edits` multipart. Only `gpt-image-2` accepts editing in this skill. Local PNG/JPEG/WebP input is limited to 50 MiB.
 - All image calls use one output image and the selected image credential. The client accepts a base64 response or a URL response and saves a local file.
 - GPT Image variants use `size`; Gemini and Grok image profiles use `aspect_ratio` plus `resolution`. The script supplies `quality=auto` and `output_format=png` only for GPT Image models.
+
+## Audio Requests
+
+- TTS: `POST /audio/speech` with `model`, `input`, `voice`, `response_format`, `speed`, and optional `instructions`. The response is saved as a local audio file after format and size checks.
+- Music: `POST /chat/completions` with the selected music model and one user message containing the music description. The client accepts returned audio data or a public audio URL and saves it locally.
+- The exact group key is used for creation and any same-task query. Audio requests never use the image key or a video-group key.
+- TTS voice names are model and service dependent. `gemini-3.1-flash-tts` exposes the verified common voice list in `model-catalog.json`; `speech-2.8` requires an explicitly supplied service-supported voice.
+- Supported output formats and defaults are in `model-catalog.json`. The client does not infer a voice, format, or music setting from the model name.
 
 ## Video Requests
 
@@ -72,3 +87,5 @@ The four models shared by the latter groups are `doubao-seedance-2-0-260128`, `d
 Before a video POST, persist the `submitting` state. Once a request may have reached the gateway, do not submit again automatically, including on timeout, network error, `429`, or `5xx`. Retain the state for task-ID recovery. Polling and downloading the same task can be retried; the skill never creates a second task to recover a lost response.
 
 Status and content requests use the same selected group's key as creation. Redirects are not followed, preventing bearer-token forwarding. MP4 output is capped at 512 MiB and is created exclusively, so an existing output file is not overwritten.
+
+Before an audio POST, persist the `submitting` state. A timeout, network error, `429`, or `5xx` moves the workflow to an uncertain state and never triggers an automatic second submission. Audio output files are capped at 512 MiB and are created exclusively.

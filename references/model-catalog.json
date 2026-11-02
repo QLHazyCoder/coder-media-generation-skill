@@ -220,5 +220,59 @@
       "prompt_required_with_image": true,
       "optional_parameters": ["generate_audio", "watermark", "seed"]
     }
+  },
+  "fallback_audio_groups": {
+    "音频模型": [
+      "Suno v5.5",
+      "suno_music",
+      "suno-v6-mini",
+      "suno-v6-wild",
+      "gemini-3.1-flash-tts",
+      "speech-2.8"
+    ]
+  },
+  "audio_models": {
+    "Suno v5.5": {
+      "kind": "music",
+      "endpoint": "openai-chat",
+      "formats": ["mp3", "wav", "m4a"],
+      "supports_voice": false
+    },
+    "suno_music": {
+      "kind": "music",
+      "endpoint": "openai-chat",
+      "formats": ["mp3", "wav", "m4a"],
+      "supports_voice": false
+    },
+    "suno-v6-mini": {
+      "kind": "music",
+      "endpoint": "openai-chat",
+      "formats": ["mp3", "wav", "m4a"],
+      "supports_voice": false
+    },
+    "suno-v6-wild": {
+      "kind": "music",
+      "endpoint": "openai-chat",
+      "formats": ["mp3", "wav", "m4a"],
+      "supports_voice": false
+    },
+    "gemini-3.1-flash-tts": {
+      "kind": "tts",
+      "endpoint": "audio-speech",
+      "formats": ["mp3", "wav", "opus", "aac", "flac", "pcm"],
+      "voices": ["alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer", "verse", "marin", "cedar"],
+      "default_voice": "alloy",
+      "default_format": "mp3",
+      "default_speed": 1
+    },
+    "speech-2.8": {
+      "kind": "tts",
+      "endpoint": "audio-speech",
+      "formats": ["mp3", "wav", "flac", "aac", "pcm"],
+      "voices": [],
+      "default_voice": "",
+      "default_format": "mp3",
+      "default_speed": 1
+    }
   }
 }

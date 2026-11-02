@@ -46,12 +46,22 @@ def _fallback_catalog(capabilities: dict[str, Any], image_model_names: set[str],
         supported = [name for name in names if name in video_profiles]
         unsupported = [name for name in names if name not in video_profiles]
         video_groups.append({"group": safe_group, "models": supported, "unconfigured_models": unsupported})
+    audio_profiles = capabilities.get("audio_models", {})
+    audio_groups = []
+    for group, names in capabilities.get("fallback_audio_groups", {}).items():
+        safe_group = _safe_name(group)
+        if not safe_group or not isinstance(names, list):
+            continue
+        supported = [name for name in names if name in audio_profiles]
+        unsupported = [name for name in names if name not in audio_profiles]
+        audio_groups.append({"group": safe_group, "models": supported, "unconfigured_models": unsupported})
     return {
         "source": "bundled_snapshot",
         "warning": warning,
         "image_models": sorted(image_model_names.intersection(capabilities.get("image_models", []))),
         "unconfigured_image_models": [],
         "video_groups": video_groups,
+        "audio_groups": audio_groups,
     }
 
 
@@ -61,7 +71,9 @@ def catalog_from_payload(payload: Any, image_model_names: set[str]) -> dict[str,
         raise ValueError("public model catalog response has an invalid shape")
 
     video_profiles = capabilities["video_models"]
+    audio_profiles = capabilities.get("audio_models", {})
     video_groups: dict[str, dict[str, list[str]]] = {}
+    audio_groups: dict[str, dict[str, list[str]]] = {}
     public_images: set[str] = set()
     unconfigured_images: set[str] = set()
     for item in payload["data"]:
@@ -77,6 +89,20 @@ def catalog_from_payload(payload: Any, image_model_names: set[str]) -> dict[str,
             else:
                 unconfigured_images.add(model)
         if "openai-video" not in endpoints:
+            if model not in audio_profiles:
+                continue
+            groups = item.get("enable_groups")
+            if not isinstance(groups, list):
+                continue
+            target = audio_profiles if model in audio_profiles else None
+            for raw_group in groups:
+                group = _safe_name(raw_group)
+                if not group:
+                    continue
+                entry = audio_groups.setdefault(group, {"models": [], "unconfigured_models": []})
+                key = "models" if target is not None else "unconfigured_models"
+                if model not in entry[key]:
+                    entry[key].append(model)
             continue
         groups = item.get("enable_groups")
         if not isinstance(groups, list):
@@ -101,6 +127,10 @@ def catalog_from_payload(payload: Any, image_model_names: set[str]) -> dict[str,
         "video_groups": [
             {"group": group, **values}
             for group, values in sorted(video_groups.items(), key=lambda item: item[0].casefold())
+        ],
+        "audio_groups": [
+            {"group": group, **values}
+            for group, values in sorted(audio_groups.items(), key=lambda item: item[0].casefold())
         ],
     }
 
@@ -135,5 +165,13 @@ def video_groups_by_name(catalog: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {
         entry["group"]: entry
         for entry in catalog.get("video_groups", [])
+        if isinstance(entry, dict) and isinstance(entry.get("group"), str)
+    }
+
+
+def audio_groups_by_name(catalog: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        entry["group"]: entry
+        for entry in catalog.get("audio_groups", [])
         if isinstance(entry, dict) and isinstance(entry.get("group"), str)
     }

@@ -429,8 +429,16 @@ def write_local_api_key(config_path: Path, api_key: str, scope: str = "image", g
             raise SkillError("video group credential map is invalid")
         group_keys[group] = api_key
         config["video_group_api_keys"] = group_keys
+    elif scope == "audio":
+        if not group or not group.strip():
+            raise SkillError("an audio group is required to save its API key")
+        group_keys = config.get("audio_group_api_keys", {})
+        if not isinstance(group_keys, dict):
+            raise SkillError("audio group credential map is invalid")
+        group_keys[group] = api_key
+        config["audio_group_api_keys"] = group_keys
     else:
-        raise SkillError("credential scope must be image or video")
+        raise SkillError("credential scope must be image, audio, or video")
     config_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(config_path.parent, 0o700)
     temporary_path = config_path.with_name(f".{config_path.name}.{os.getpid()}.tmp")
@@ -482,6 +490,30 @@ def read_video_group_api_key(group: str, config_path: Path | None = None) -> str
     raise SkillError(f"no API key is configured for video group {group!r}")
 
 
+def read_audio_group_api_key(group: str, config_path: Path | None = None) -> str:
+    if not group:
+        raise SkillError("an audio group must be selected before looking up its API key")
+    env_map = os.environ.get("CODER_AUDIO_GROUP_API_KEYS_JSON", "").strip()
+    if env_map:
+        try:
+            parsed = json.loads(env_map)
+        except json.JSONDecodeError as error:
+            raise SkillError("CODER_AUDIO_GROUP_API_KEYS_JSON must be a JSON object") from error
+        if not isinstance(parsed, dict):
+            raise SkillError("CODER_AUDIO_GROUP_API_KEYS_JSON must be a JSON object")
+        key = parsed.get(group)
+        if isinstance(key, str) and key.strip():
+            return key.strip()
+    config = read_credentials(config_path or local_config_path())
+    group_keys = config.get("audio_group_api_keys", {})
+    if not isinstance(group_keys, dict):
+        raise SkillError("local audio group credential map is invalid")
+    key = group_keys.get(group)
+    if isinstance(key, str) and key.strip():
+        return key.strip()
+    raise SkillError(f"no API key is configured for audio group {group!r}")
+
+
 def security_reminder() -> str:
     return (
         "Security reminder: enable model limits for this key and allow only the models you intend to use. "
@@ -516,8 +548,19 @@ def remove_local_api_key(config_path: Path, scope: str = "image", group: str | N
             config["video_group_api_keys"] = group_keys
         else:
             config.pop("video_group_api_keys", None)
+    elif scope == "audio":
+        if not group:
+            raise SkillError("an audio group is required to remove its API key")
+        group_keys = config.get("audio_group_api_keys", {})
+        if not isinstance(group_keys, dict):
+            raise SkillError("local audio group credential map is invalid")
+        group_keys.pop(group, None)
+        if group_keys:
+            config["audio_group_api_keys"] = group_keys
+        else:
+            config.pop("audio_group_api_keys", None)
     else:
-        raise SkillError("credential scope must be image or video")
+        raise SkillError("credential scope must be image, audio, or video")
     if config:
         write_private_json(config_path, config)
     else:
