@@ -24,7 +24,7 @@ from typing import Any
 from media_catalog import load_public_catalog
 
 
-DEFAULT_BASE_URL = "https://api.qlhazycoder.tech/v1"
+DEFAULT_BASE_URL = "https://wcf.coderapi.vip/v1"
 DEFAULT_MODEL = "gpt-image-2"
 MAX_IMAGE_BYTES = 50 * 1024 * 1024
 CONFIG_ENV_VAR = "CODER_MEDIA_CONFIG_PATH"

@@ -1,6 +1,6 @@
 # Gateway API and Credential Contract
 
-The client calls the user's gateway, not a vendor endpoint. `CODER_API_BASE_URL` selects the API base and defaults to `https://api.qlhazycoder.tech/v1`. The public catalog is read without credentials from `https://coderapi.vip/api/pricing`; only model names, endpoint types, and enabled group names are retained. Price fields are ignored.
+The client calls the user's gateway, not a vendor endpoint. `CODER_API_BASE_URL` selects the API base and defaults to `https://wcf.coderapi.vip/v1`. The public catalog is read without credentials from `https://wcf.coderapi.vip/api/pricing`; only model names, endpoint types, and enabled group names are retained. Price fields are ignored.
 
 ## Credential Map
 
