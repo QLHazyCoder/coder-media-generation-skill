@@ -353,7 +353,7 @@ class GenerateVideoTest(unittest.TestCase):
                 uploaded_url = video.upload_reference_image(image, "test-video-group-key", timeout=30)
 
             request = opener.open.call_args.args[0]
-            self.assertEqual(request.full_url, video.IMAGE_UPLOAD_ENDPOINT)
+            self.assertEqual(request.full_url, video.media_endpoints().image_upload_endpoint)
             self.assertEqual(request.get_header("Authorization"), "Bearer test-video-group-key")
             self.assertEqual(request.get_header("User-agent"), "CoderMediaGenerationSkill/1.0")
             self.assertEqual(uploaded_url, f"https://coderapi.vip/image-upload/{media_id}")

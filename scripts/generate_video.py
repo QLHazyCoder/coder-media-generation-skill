@@ -36,9 +36,6 @@ from generate_image import (
 )
 from media_catalog import load_capabilities, load_public_catalog, video_groups_by_name
 from media_endpoints import (
-    DEFAULT_IMAGE_PUBLIC_BASE_URL,
-    DEFAULT_MEDIA_PUBLIC_BASE_URL,
-    DEFAULT_MEDIA_UPLOAD_ORIGIN,
     load_media_endpoints,
 )
 
@@ -55,10 +52,7 @@ MAX_TIMEOUT = 1000
 MAX_MEDIA_UPLOAD_BYTES = 512 * 1024 * 1024
 MEDIA_UPLOAD_TIMEOUT = 300
 TASK_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._~-]{0,255}\Z")
-IMAGE_UPLOAD_ENDPOINT = DEFAULT_MEDIA_UPLOAD_ORIGIN + "/image-upload/upload"
 IMAGE_UPLOAD_URL_PATTERN = re.compile(r"^/image-upload/(m_[0-7][0-9A-HJKMNP-TV-Z]{25})$")
-MEDIA_UPLOAD_ENDPOINT = DEFAULT_MEDIA_UPLOAD_ORIGIN + "/media-upload/upload"
-MEDIA_UPLOAD_HOST = "wcf.coderapi.vip"
 MEDIA_UPLOAD_URL_PATTERN = re.compile(r"^/media-upload/([va]_[0-7][0-9A-HJKMNP-TV-Z]{25})$")
 LEGACY_MEDIA_PUBLIC_HOST = "api.qlhazycoder.tech"
 
