@@ -23,13 +23,15 @@ The image key is independent. Every exact public video group has a separate entr
 
 Every exact public audio group has a separate entry in `audio_group_api_keys`. A missing audio group entry never falls back to the image key or a video-group key. `CODER_AUDIO_GROUP_API_KEYS_JSON` provides the same exact-name mapping for automation.
 
-Local reference videos and audio use the fixed media host:
+Local reference uploads use the direct upload origin and return public URLs from the public media host:
 
-- Endpoint: `POST https://api.qlhazycoder.tech/media-upload/upload`
+- Endpoint: `POST https://wcf.coderapi.vip/media-upload/upload` by default
 - Authentication: `Authorization: Bearer <selected video-group key>`
 - Body: one multipart `file` field, streamed without redirect following
 - Accepted containers: MP4/WebM/MOV video and MP3/WAV/M4A audio, at most 512 MiB per file
-- Accepted response URL: `https://api.qlhazycoder.tech/media-upload/<v_or_a_ULID>` with no query or fragment
+- Accepted response URL: `https://coderapi.vip/media-upload/<v_or_a_ULID>` by default, with no query or fragment
+
+The upload origin is configurable with `CODER_MEDIA_UPLOAD_ORIGIN`. Image uploads use its `/image-upload/upload` path; video and audio uploads use its `/media-upload/upload` path. Public image and media bases are configurable with `CODER_IMAGE_PUBLIC_BASE_URL` and `CODER_MEDIA_PUBLIC_BASE_URL`. The client validates all three values as HTTPS URLs and never derives them from a request host.
 
 Uploaded reference URLs are cached in the workflow state by file path, size, and mtime so an interrupted submission does not upload the same file twice. A failed upload stops before the billable video POST. `--publish --file <mp4> --group <exact group>` publishes an already downloaded local video through the same endpoint and returns its public URL; it is always explicit and never retries a task.
 

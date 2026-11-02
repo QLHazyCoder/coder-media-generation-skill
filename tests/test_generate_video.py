@@ -429,15 +429,15 @@ class GenerateVideoTest(unittest.TestCase):
             response.status = 201
             response.read.return_value = json.dumps({
                 "success": True,
-                "data": {"url": f"https://api.qlhazycoder.tech/media-upload/{media_id}"},
+                "data": {"url": f"https://coderapi.vip/media-upload/{media_id}"},
             }).encode()
             connection = MagicMock()
             connection.getresponse.return_value = response
             with patch.object(video.http.client, "HTTPSConnection", return_value=connection) as connect:
                 uploaded_url, uploaded_id = video.upload_media_file(media, "video", "test-video-group-key", timeout=30)
-            self.assertEqual(uploaded_url, f"https://api.qlhazycoder.tech/media-upload/{media_id}")
+            self.assertEqual(uploaded_url, f"https://coderapi.vip/media-upload/{media_id}")
             self.assertEqual(uploaded_id, media_id)
-            connect.assert_called_once_with("api.qlhazycoder.tech", timeout=30)
+            connect.assert_called_once_with("wcf.coderapi.vip", timeout=30)
             connection.putrequest.assert_called_once_with("POST", "/media-upload/upload", skip_host=True)
             headers = {call.args[0]: call.args[1] for call in connection.putheader.call_args_list}
             self.assertEqual(headers["Authorization"], "Bearer test-video-group-key")
@@ -451,9 +451,9 @@ class GenerateVideoTest(unittest.TestCase):
             media = Path(directory) / "reference.mp4"
             media.write_bytes(MP4_BYTES)
             for kind, url in (
-                ("video", "https://api.qlhazycoder.tech/media-upload/a_" + "1" * 26),
+                ("video", "https://coderapi.vip/media-upload/a_" + "1" * 26),
                 ("video", "https://coderapi.vip/image-upload/m_" + "1" * 26),
-                ("video", "https://api.qlhazycoder.tech/media-upload/v_" + "1" * 26 + "?x=1"),
+                ("video", "https://coderapi.vip/media-upload/v_" + "1" * 26 + "?x=1"),
             ):
                 response = MagicMock()
                 response.status = 201
@@ -483,8 +483,8 @@ class GenerateVideoTest(unittest.TestCase):
             )
             self.assertEqual(configured.returncode, 0, configured.stderr)
             state = video.read_state(Path(state_path))
-            video_url = "https://api.qlhazycoder.tech/media-upload/v_" + "1" * 26
-            audio_url = "https://api.qlhazycoder.tech/media-upload/a_" + "2" * 26
+            video_url = "https://coderapi.vip/media-upload/v_" + "1" * 26
+            audio_url = "https://coderapi.vip/media-upload/a_" + "2" * 26
             with patch.object(video, "upload_media_file", side_effect=[(video_url, "v_" + "1" * 26), (audio_url, "a_" + "2" * 26)]) as upload, \
                  patch.object(video, "http_json", return_value={"id": "video-task-1", "status": "queued"}) as submit_request, \
                  patch.object(video, "api_base_url", return_value="https://api.example/v1"), \
@@ -531,6 +531,58 @@ class GenerateVideoTest(unittest.TestCase):
         result = self.run_skill("--begin", "--prompt", "animate", "--image-url", "file:///tmp/image.png")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("public HTTP(S) URL", result.stderr)
+
+    def test_unsubmitted_legacy_cached_media_urls_migrate_without_touching_external_urls(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "state.json"
+            legacy = "https://api.qlhazycoder.tech/media-upload/v_" + "1" * 26
+            external = "https://media.example/reference.mp4"
+            state_path.write_text(json.dumps({
+                "version": 2,
+                "media": "video",
+                "status": "ready",
+                "prompt": "reference",
+                "uploaded_reference_media": {
+                    "/tmp/reference.mp4": {
+                        "kind": "video", "url": legacy, "size": 12, "mtime_ns": 34,
+                    },
+                },
+                "reference_video_urls": [legacy, external],
+            }))
+            state = video.read_state(state_path)
+            migrated = "https://coderapi.vip/media-upload/v_" + "1" * 26
+            self.assertEqual(state["uploaded_reference_media"]["/tmp/reference.mp4"]["url"], migrated)
+            self.assertEqual(state["reference_video_urls"], [migrated, external])
+            self.assertEqual(json.loads(state_path.read_text())["reference_video_urls"], [migrated, external])
+
+    def test_submitted_legacy_state_is_not_rewritten(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "state.json"
+            legacy = "https://api.qlhazycoder.tech/media-upload/v_" + "1" * 26
+            state_path.write_text(json.dumps({
+                "version": 2,
+                "media": "video",
+                "status": "submitted",
+                "prompt": "reference",
+                "reference_video_urls": [legacy],
+            }))
+            state = video.read_state(state_path)
+            self.assertEqual(state["reference_video_urls"], [legacy])
+
+    def test_media_endpoint_overrides_are_validated_and_separated(self) -> None:
+        with patch.dict(os.environ, {
+            "CODER_MEDIA_UPLOAD_ORIGIN": "https://upload.example/",
+            "CODER_IMAGE_PUBLIC_BASE_URL": "https://public.example/image-upload/",
+            "CODER_MEDIA_PUBLIC_BASE_URL": "https://public.example/media-upload/",
+        }):
+            endpoints = video.media_endpoints()
+        self.assertEqual(endpoints.upload_origin, "https://upload.example")
+        self.assertEqual(endpoints.image_upload_endpoint, "https://upload.example/image-upload/upload")
+        self.assertEqual(endpoints.media_upload_endpoint, "https://upload.example/media-upload/upload")
+        self.assertEqual(endpoints.media_public_base_url, "https://public.example/media-upload")
+        with patch.dict(os.environ, {"CODER_MEDIA_UPLOAD_ORIGIN": "https://upload.example/path"}):
+            with self.assertRaises(video.SkillError):
+                video.media_endpoints()
 
     def test_create_poll_and_download_without_repeat_post(self) -> None:
         path = self.ready(resolution="1080p", aspect_ratio="9:16")

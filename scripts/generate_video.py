@@ -35,6 +35,12 @@ from generate_image import (
     write_private_json,
 )
 from media_catalog import load_capabilities, load_public_catalog, video_groups_by_name
+from media_endpoints import (
+    DEFAULT_IMAGE_PUBLIC_BASE_URL,
+    DEFAULT_MEDIA_PUBLIC_BASE_URL,
+    DEFAULT_MEDIA_UPLOAD_ORIGIN,
+    load_media_endpoints,
+)
 
 
 VIDEO_MODEL_CONFIG = load_capabilities()["video_models"]
@@ -49,11 +55,19 @@ MAX_TIMEOUT = 1000
 MAX_MEDIA_UPLOAD_BYTES = 512 * 1024 * 1024
 MEDIA_UPLOAD_TIMEOUT = 300
 TASK_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._~-]{0,255}\Z")
-IMAGE_UPLOAD_ENDPOINT = "https://coderapi.vip/image-upload/upload"
+IMAGE_UPLOAD_ENDPOINT = DEFAULT_MEDIA_UPLOAD_ORIGIN + "/image-upload/upload"
 IMAGE_UPLOAD_URL_PATTERN = re.compile(r"^/image-upload/(m_[0-7][0-9A-HJKMNP-TV-Z]{25})$")
-MEDIA_UPLOAD_ENDPOINT = "https://api.qlhazycoder.tech/media-upload/upload"
-MEDIA_UPLOAD_HOST = "api.qlhazycoder.tech"
+MEDIA_UPLOAD_ENDPOINT = DEFAULT_MEDIA_UPLOAD_ORIGIN + "/media-upload/upload"
+MEDIA_UPLOAD_HOST = "wcf.coderapi.vip"
 MEDIA_UPLOAD_URL_PATTERN = re.compile(r"^/media-upload/([va]_[0-7][0-9A-HJKMNP-TV-Z]{25})$")
+LEGACY_MEDIA_PUBLIC_HOST = "api.qlhazycoder.tech"
+
+
+def media_endpoints():
+    try:
+        return load_media_endpoints()
+    except ValueError as error:
+        raise SkillError(str(error)) from error
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -221,18 +235,19 @@ def media_upload_multipart_prefix(boundary: str, filename: str) -> bytes:
 
 def upload_media_file(media_path: Path, expected_kind: str, api_key: str, timeout: int) -> tuple[str, str]:
     media = validate_media_reference(str(media_path), expected_kind)
-    parsed = urllib.parse.urlsplit(MEDIA_UPLOAD_ENDPOINT)
-    if parsed.scheme != "https" or parsed.netloc != MEDIA_UPLOAD_HOST or parsed.query or parsed.fragment:
+    endpoints = media_endpoints()
+    parsed = urllib.parse.urlsplit(endpoints.media_upload_endpoint)
+    if parsed.scheme != "https" or not parsed.netloc or parsed.query or parsed.fragment:
         raise SkillError("media upload endpoint is invalid")
     size = media.stat().st_size
     boundary = f"----CoderAPIMediaUpload{secrets.token_hex(16)}"
     filename = "reference.mp4" if expected_kind == "video" else "reference.m4a"
     prefix = media_upload_multipart_prefix(boundary, filename)
     suffix = f"\r\n--{boundary}--\r\n".encode("ascii")
-    connection = http.client.HTTPSConnection(MEDIA_UPLOAD_HOST, timeout=timeout)
+    connection = http.client.HTTPSConnection(parsed.netloc, timeout=timeout)
     try:
         connection.putrequest("POST", parsed.path, skip_host=True)
-        connection.putheader("Host", MEDIA_UPLOAD_HOST)
+        connection.putheader("Host", parsed.netloc)
         connection.putheader("Accept", "application/json, text/plain")
         connection.putheader("User-Agent", "CoderMediaGenerationSkill/1.0")
         connection.putheader("Content-Type", f"multipart/form-data; boundary={boundary}")
@@ -267,20 +282,21 @@ def upload_media_file(media_path: Path, expected_kind: str, api_key: str, timeou
     if not media_url:
         raise SkillError("media upload response did not contain a public media URL")
     media_parsed = urllib.parse.urlsplit(media_url)
+    public_base = urllib.parse.urlsplit(endpoints.media_public_base_url)
     match = MEDIA_UPLOAD_URL_PATTERN.fullmatch(media_parsed.path)
     if (
         media_parsed.scheme != "https"
-        or media_parsed.netloc != MEDIA_UPLOAD_HOST
+        or media_parsed.netloc != public_base.netloc
         or not match
         or media_parsed.query
         or media_parsed.fragment
     ):
-        raise SkillError("media upload response must contain an api.qlhazycoder.tech media URL with a valid media ID")
+        raise SkillError("media upload response must contain a configured public media URL with a valid media ID")
     media_id = match.group(1)
     expected_prefix = "v_" if expected_kind == "video" else "a_"
     if not media_id.startswith(expected_prefix):
         raise SkillError("media upload response returned the wrong media kind")
-    return f"https://{MEDIA_UPLOAD_HOST}/media-upload/{media_id}", media_id
+    return f"{endpoints.media_public_base_url}/{media_id}", media_id
 
 
 def media_fingerprint(media: Path) -> tuple[int, int]:
@@ -335,6 +351,7 @@ def upload_state_reference_media(path: Path, state: dict[str, Any], api_key: str
 
 
 def upload_reference_image(image_path: Path, api_key: str, timeout: int) -> str:
+    endpoints = media_endpoints()
     body, content_type = upload_multipart_payload(image_path, "file")
     headers = {
         "Accept": "application/json, text/plain",
@@ -343,7 +360,7 @@ def upload_reference_image(image_path: Path, api_key: str, timeout: int) -> str:
         "Content-Length": str(len(body)),
         "Authorization": f"Bearer {api_key}",
     }
-    request = urllib.request.Request(IMAGE_UPLOAD_ENDPOINT, data=body, method="POST", headers=headers)
+    request = urllib.request.Request(endpoints.image_upload_endpoint, data=body, method="POST", headers=headers)
     try:
         with urllib.request.build_opener(NoRedirect()).open(request, timeout=timeout) as response:
             response_body = response.read(MAX_UPLOAD_RESPONSE_BYTES + 1)
@@ -364,16 +381,57 @@ def upload_reference_image(image_path: Path, api_key: str, timeout: int) -> str:
     if not image_url:
         raise SkillError("image upload response did not contain a public image URL")
     parsed = urllib.parse.urlsplit(image_url)
+    public_base = urllib.parse.urlsplit(endpoints.image_public_base_url)
     match = IMAGE_UPLOAD_URL_PATTERN.fullmatch(parsed.path)
     if (
         parsed.scheme != "https"
-        or parsed.netloc != "coderapi.vip"
+        or parsed.netloc != public_base.netloc
         or not match
         or parsed.query
         or parsed.fragment
     ):
-        raise SkillError("image upload response must contain a coderapi.vip image URL with a valid media ID")
-    return f"https://coderapi.vip/image-upload/{match.group(1)}"
+        raise SkillError("image upload response must contain a configured public image URL with a valid media ID")
+    return f"{endpoints.image_public_base_url}/{match.group(1)}"
+
+
+def migrate_cached_media_url(value: Any, endpoints) -> str | None:
+    if not isinstance(value, str):
+        return None
+    parsed = urllib.parse.urlsplit(value.strip())
+    if parsed.scheme != "https" or parsed.netloc != LEGACY_MEDIA_PUBLIC_HOST or parsed.query or parsed.fragment:
+        return None
+    match = MEDIA_UPLOAD_URL_PATTERN.fullmatch(parsed.path)
+    if not match:
+        return None
+    return f"{endpoints.media_public_base_url}/{match.group(1)}"
+
+
+def migrate_unsubmitted_cached_urls(state: dict[str, Any]) -> bool:
+    if state.get("status") not in {"model_selection", "key_storage_decision", "ready"}:
+        return False
+    endpoints = media_endpoints()
+    changed = False
+    replacements: dict[str, str] = {}
+    uploads = state.get("uploaded_reference_media")
+    if isinstance(uploads, dict):
+        for cached in uploads.values():
+            if not isinstance(cached, dict):
+                continue
+            migrated = migrate_cached_media_url(cached.get("url"), endpoints)
+            if migrated:
+                old = cached["url"]
+                cached["url"] = migrated
+                replacements[old] = migrated
+                changed = True
+    for field in ("reference_video_urls", "reference_audio_urls"):
+        values = state.get(field)
+        if not isinstance(values, list):
+            continue
+        for index, value in enumerate(values):
+            if value in replacements:
+                values[index] = replacements[value]
+                changed = True
+    return changed
 
 
 def read_state(path: Path) -> dict[str, Any]:
@@ -389,6 +447,8 @@ def read_state(path: Path) -> dict[str, Any]:
         if state["status"] not in {"submitting", "submission_uncertain", "submitted", "in_progress", "completed", "failed", "canceled"}:
             raise SkillError("old video workflow has no group selection; start a new workflow")
         state["legacy_image_key"] = True
+    if migrate_unsubmitted_cached_urls(state):
+        write_private_json(path, state)
     return state
 
 

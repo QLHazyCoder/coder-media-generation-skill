@@ -85,7 +85,7 @@ This skill cannot open a native question UI. Ask required questions in the curre
    python3 scripts/generate_video.py --save-local-key --state <state>
    ```
 
-   The key is read by a hidden PTY prompt and stored under that exact group. The local image-upload and media-upload endpoints are only identity checks for a user of the gateway: local image, video, and audio uploads reuse this same selected video-group key. There is no separate upload credential. Grok sends a local image as multipart directly to the video endpoint; other configured adapters upload it to the fixed image host first and send the resulting public URL. Local reference videos and audio are uploaded to the fixed media host at `https://api.qlhazycoder.tech/media-upload/upload`. A caller-supplied public URL skips upload.
+   The key is read by a hidden PTY prompt and stored under that exact group. The local image-upload and media-upload endpoints are only identity checks for a user of the gateway: local image, video, and audio uploads reuse this same selected video-group key. There is no separate upload credential. Grok sends a local image as multipart directly to the video endpoint; other configured adapters upload it to the direct upload origin first and send the resulting public URL. Local reference videos and audio are uploaded to `https://wcf.coderapi.vip/media-upload/upload` by default; returned public URLs use `https://coderapi.vip/media-upload/`. A caller-supplied public URL skips upload. The upload origin and public bases can be overridden with `CODER_MEDIA_UPLOAD_ORIGIN`, `CODER_IMAGE_PUBLIC_BASE_URL`, and `CODER_MEDIA_PUBLIC_BASE_URL`.
 
 4. After the state is `ready`, run `--submit --state <state>` exactly once. A successful submission returns a public task ID. Poll the same ID with `--poll --state <state> --output-dir <directory>`; polling calls are bounded and may be repeated. Downloaded content must pass MP4 validation and is never allowed to overwrite an existing file.
 
@@ -99,7 +99,7 @@ This skill cannot open a native question UI. Ask required questions in the curre
    python3 scripts/generate_video.py --publish --file "/absolute/path/generated.mp4" --group "<exact public group>"
    ```
 
-   The command uses that exact group's saved key, accepts one local MP4/WebM/MOV file up to 512 MiB, and returns a `public_url` on `api.qlhazycoder.tech`. It is not run automatically after `--poll`.
+   The command uses that exact group's saved key, accepts one local MP4/WebM/MOV file up to 512 MiB, and returns a `public_url` on the configured public media host (default `coderapi.vip`). It is not run automatically after `--poll`.
 
 ## Audio Workflow
 
