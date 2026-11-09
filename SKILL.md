@@ -52,14 +52,14 @@ This skill cannot open a native question UI. Ask required questions in the curre
 
    Accept local PNG, JPEG, or WebP input up to 50 MiB. Send it directly in the edit request; do not copy it into repository or project storage.
 
-2. Read the workflow JSON. When a key is missing, save the image key for this workflow with `--save-local-key --state <state>` and provide it only through the hidden PTY prompt. Then collect the exact model and all required layout settings in one answer. GPT Image models use `size`; Gemini and Grok image models use `aspect_ratio` and `resolution`. Use only the options returned by the catalog. Editing is supported only for `gpt-image-2`.
+2. Read the workflow JSON. When a key is missing, save the image key for this workflow with `--save-local-key --state <state>` and provide it only through the hidden PTY prompt. Then collect the exact model, aspect ratio, and resolution preset in one answer. All image models use `aspect_ratio + resolution`; the gateway converts that shared layout to the upstream protocol. Use only the model-specific options returned by the catalog. Editing is supported only for `gpt-image-2`.
 
    ```bash
-   python3 scripts/generate_image.py --select-configuration --state <state> --model gpt-image-2 --size 1024x1024
+   python3 scripts/generate_image.py --select-configuration --state <state> --model gpt-image-2 --aspect-ratio 1:1 --resolution 1K
    python3 scripts/generate_image.py --select-configuration --state <state> --model gemini-3.1-flash-image-preview --aspect-ratio 16:9 --resolution 2K
    ```
 
-3. Once the state is `ready`, call `--generate --state <state> --output-dir <directory>`. The client uses the selected model exactly as named. It retries transient image-generation failures at most three times per user-approved round; after exhausted retries, request confirmation before another round.
+3. Once the state is `ready`, call `--generate --state <state> --output-dir <directory>`. Image generation is a synchronous `POST /v1/images/generations` request; it has no separate image-task polling endpoint. The client waits up to 300 seconds per request by default, and `--timeout` may not exceed 300 seconds. The response is requested as `b64_json` and saved locally; if the gateway returns an image `url` instead, download that exact returned URL. It retries transient image-generation failures at most three times per user-approved round; after exhausted retries, request confirmation before another round.
 
 4. Report the saved file path and exact model. If the result includes `security_reminder`, relay it verbatim.
 

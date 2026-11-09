@@ -61,8 +61,8 @@ The current audio fallback group is `音频模型`. Its verified models are `Sun
 
 - Generate: `POST /images/generations` with the exact selected model and its catalog-defined layout fields.
 - Edit: `POST /images/edits` multipart. Only `gpt-image-2` accepts editing in this skill. Local PNG/JPEG/WebP input is limited to 50 MiB.
-- All image calls use one output image and the selected image credential. The client accepts a base64 response or a URL response and saves a local file.
-- GPT Image variants use `size`; Gemini and Grok image profiles use `aspect_ratio` plus `resolution`. The script supplies `quality=auto` and `output_format=png` only for GPT Image models.
+- Image generation and editing are synchronous; this skill does not poll a separate image task URL. The client waits up to 300 seconds per request by default, with a hard maximum of 300 seconds. It requests one `b64_json` image and saves it locally; if the gateway returns `data[0].url` instead, it downloads that exact returned URL with the same timeout.
+- All image profiles use `aspect_ratio` plus `resolution`. The gateway converts the shared layout to `size` for OpenAI-compatible channels and keeps the native fields for Gemini and xAI. The script supplies `quality=auto` and `output_format=png` only for GPT Image models. xAI profiles currently expose `1K` and `2K`; the gateway's global `4K` option does not imply that every upstream accepts it.
 
 ## Audio Requests
 

@@ -152,28 +152,17 @@ class GenerateImageTest(unittest.TestCase):
         self.assertEqual(begin.returncode, 0, begin.stderr)
         state_path = json.loads(begin.stdout)["state"]
 
-        if model.startswith("gpt-image-2"):
-            configuration_command = [
-                "--select-configuration",
-                "--state",
-                state_path,
-                "--model",
-                model,
-                "--size",
-                layout_option,
-            ]
-        else:
-            configuration_command = [
-                "--select-configuration",
-                "--state",
-                state_path,
-                "--model",
-                model,
-                "--aspect-ratio",
-                layout_option,
-                "--resolution",
-                resolution or "1K",
-            ]
+        configuration_command = [
+            "--select-configuration",
+            "--state",
+            state_path,
+            "--model",
+            model,
+            "--aspect-ratio",
+            layout_option,
+            "--resolution",
+            resolution or "1K",
+        ]
         configured = self.run_skill(*configuration_command)
         self.assertEqual(configured.returncode, 0, configured.stderr)
         self.assertEqual(json.loads(configured.stdout)["status"], "ready")
@@ -200,12 +189,15 @@ class GenerateImageTest(unittest.TestCase):
             result = self.run_workflow(
                 "a neon city",
                 "gpt-image-2",
-                "1536x1024",
+                "3:2",
                 directory,
+                resolution="2K",
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(MockCoderAPIHandler.requests[0]["model"], "gpt-image-2")
-            self.assertEqual(MockCoderAPIHandler.requests[0]["size"], "1536x1024")
+            self.assertEqual(MockCoderAPIHandler.requests[0]["aspect_ratio"], "3:2")
+            self.assertEqual(MockCoderAPIHandler.requests[0]["resolution"], "2K")
+            self.assertNotIn("size", MockCoderAPIHandler.requests[0])
             self.assertEqual(MockCoderAPIHandler.requests[0]["response_format"], "b64_json")
             output = json.loads(result.stdout)
             self.assertEqual(Path(output["file"]).read_bytes(), PNG_BYTES)
@@ -218,7 +210,7 @@ class GenerateImageTest(unittest.TestCase):
             result = self.run_workflow(
                 "replace the background with a night city",
                 "gpt-image-2",
-                "1024x1024",
+                "1:1",
                 directory,
                 input_image=str(input_path),
             )
@@ -226,7 +218,9 @@ class GenerateImageTest(unittest.TestCase):
             request = MockCoderAPIHandler.requests[0]
             self.assertTrue(request["_content_type"].startswith("multipart/form-data; boundary="))
             self.assertEqual(request["model"], "gpt-image-2")
-            self.assertEqual(request["size"], "1024x1024")
+            self.assertEqual(request["aspect_ratio"], "1:1")
+            self.assertEqual(request["resolution"], "1K")
+            self.assertNotIn("size", request)
             self.assertEqual(request["response_format"], "b64_json")
             self.assertEqual(request["_image_bytes"], PNG_BYTES)
             self.assertEqual(request["_image_content_type"], "image/png")
@@ -255,17 +249,17 @@ class GenerateImageTest(unittest.TestCase):
             self.assertIn("gpt-image-2 only", unsupported.stderr)
             generator.remove_workflow_state(Path(state_path))
 
-    def test_gpt_image_2_exposes_complete_sizes_with_display_resolution_labels(self) -> None:
+    def test_gpt_image_2_exposes_unified_layout_options(self) -> None:
         catalog = next(item for item in generator.model_catalog_for_output() if item["model"] == "gpt-image-2")
-        self.assertEqual(catalog["options"], generator.GPT_IMAGE_2_SIZES)
-        self.assertIn({"value": "2048x2048", "label": "2048x2048 (2K)"}, catalog["display_options"])
-        self.assertIn({"value": "3840x2160", "label": "3840x2160 (4K)"}, catalog["display_options"])
+        self.assertEqual(catalog["parameter"], "aspect_ratio_resolution")
+        self.assertEqual(catalog["options"], generator.IMAGE_ASPECT_RATIOS)
+        self.assertEqual(catalog["resolution_options"], ["1K", "2K", "4K"])
 
         begin = self.run_skill("--begin", "--prompt", "a landscape scene")
         state_path = json.loads(begin.stdout)["state"]
         layout = self.run_skill("--select-model", "--state", state_path, "--model", "gpt-image-2")
         self.assertEqual(layout.returncode, 0, layout.stderr)
-        self.assertIn({"value": "2160x3840", "label": "2160x3840 (4K)"}, json.loads(layout.stdout)["display_options"])
+        self.assertEqual(json.loads(layout.stdout)["resolution_options"], ["1K", "2K", "4K"])
         generator.remove_workflow_state(Path(state_path))
 
     def test_complete_configuration_skips_the_intermediate_layout_question(self) -> None:
@@ -281,13 +275,15 @@ class GenerateImageTest(unittest.TestCase):
             workflow["state"],
             "--model",
             "gpt-image-2",
-            "--size",
-            "1536x1024",
+            "--aspect-ratio",
+            "3:2",
+            "--resolution",
+            "2K",
         )
         self.assertEqual(configured.returncode, 0, configured.stderr)
         ready = json.loads(configured.stdout)
         self.assertEqual(ready["status"], "ready")
-        self.assertEqual(ready["layout"], {"size": "1536x1024"})
+        self.assertEqual(ready["layout"], {"aspect_ratio": "3:2", "resolution": "2K"})
         generator.remove_workflow_state(Path(workflow["state"]))
 
     def test_current_model_catalog_hardcodes_runtime_capabilities(self) -> None:
@@ -299,23 +295,46 @@ class GenerateImageTest(unittest.TestCase):
                 "gpt-image-2.5",
                 "gpt-image-2.5-flare",
                 "gpt-image-2.5-sunburst",
+                "gpt-image-2.6-flare",
+                "gpt-image-2.6-sunburst",
                 "gemini-3-pro-image-preview",
                 "gemini-3.1-flash-image-preview",
                 "grok-imagine-image-lite",
                 "grok-imagine-image-2.0",
+                "grok-imagine-image",
+                "grok-imagine-image-quality",
+                "grok-imagine-agent-mode",
             ],
         )
-        for model in catalog[4:6]:
+        by_model = {item["model"]: item for item in catalog}
+        for model_name in ["gemini-3-pro-image-preview", "gemini-3.1-flash-image-preview"]:
+            model = by_model[model_name]
             self.assertEqual(model["parameter"], "aspect_ratio_resolution")
             self.assertEqual(model["resolution_options"], ["1K", "2K", "4K"])
             self.assertEqual(model["capabilities"]["aspect_ratios"], generator.GEMINI_NATIVE_IMAGE_ASPECT_RATIOS)
             self.assertFalse(model["capabilities"]["supports_editing"])
 
-        for model in catalog[1:4]:
-            self.assertEqual(model["parameter"], "size")
-            self.assertEqual(model["options"], generator.GPT_IMAGE_2_SIZES)
-            self.assertEqual(model["capabilities"], generator.GPT_IMAGE_2_CAPABILITIES)
-        for model in catalog[6:]:
+        for model_name in [
+            "gpt-image-2",
+            "gpt-image-2.5",
+            "gpt-image-2.5-flare",
+            "gpt-image-2.5-sunburst",
+            "gpt-image-2.6-flare",
+            "gpt-image-2.6-sunburst",
+        ]:
+            model = by_model[model_name]
+            self.assertEqual(model["parameter"], "aspect_ratio_resolution")
+            self.assertEqual(model["options"], generator.IMAGE_ASPECT_RATIOS)
+            self.assertEqual(model["resolution_options"], ["1K", "2K", "4K"])
+            self.assertEqual(model["capabilities"], generator.GPT_IMAGE_CAPABILITIES)
+        for model_name in [
+            "grok-imagine-image-lite",
+            "grok-imagine-image-2.0",
+            "grok-imagine-image",
+            "grok-imagine-image-quality",
+            "grok-imagine-agent-mode",
+        ]:
+            model = by_model[model_name]
             self.assertEqual(model["parameter"], "aspect_ratio_resolution")
             self.assertEqual(model["default"], "auto")
             self.assertEqual(model["resolution_options"], ["1K", "2K"])
@@ -323,14 +342,22 @@ class GenerateImageTest(unittest.TestCase):
             self.assertEqual(model["capabilities"]["aspect_ratios"], generator.XAI_IMAGE_ASPECT_RATIOS)
             self.assertFalse(model["capabilities"]["supports_editing"])
 
-    def test_gpt_image_25_models_use_gpt_image_2_generation_parameters(self) -> None:
-        for model in ["gpt-image-2.5", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"]:
+    def test_gpt_image_models_use_unified_layout_and_defaults(self) -> None:
+        for model in [
+            "gpt-image-2.5",
+            "gpt-image-2.5-flare",
+            "gpt-image-2.5-sunburst",
+            "gpt-image-2.6-flare",
+            "gpt-image-2.6-sunburst",
+        ]:
             with self.subTest(model=model), tempfile.TemporaryDirectory() as directory:
-                result = self.run_workflow("a glowing nebula", model, "2048x2048", directory)
+                result = self.run_workflow("a glowing nebula", model, "1:1", directory, resolution="2K")
                 self.assertEqual(result.returncode, 0, result.stderr)
                 payload = MockCoderAPIHandler.requests[-1]
                 self.assertEqual(payload["model"], model)
-                self.assertEqual(payload["size"], "2048x2048")
+                self.assertEqual(payload["aspect_ratio"], "1:1")
+                self.assertEqual(payload["resolution"], "2K")
+                self.assertNotIn("size", payload)
                 self.assertEqual(payload["quality"], "auto")
                 self.assertEqual(payload["output_format"], "png")
 
@@ -375,7 +402,13 @@ class GenerateImageTest(unittest.TestCase):
         generator.remove_workflow_state(Path(state_path))
 
     def test_grok_model_names_and_capabilities_are_preserved(self) -> None:
-        for model in ["grok-imagine-image-lite", "grok-imagine-image-2.0"]:
+        for model in [
+            "grok-imagine-image-lite",
+            "grok-imagine-image-2.0",
+            "grok-imagine-image",
+            "grok-imagine-image-quality",
+            "grok-imagine-agent-mode",
+        ]:
             with self.subTest(model=model), tempfile.TemporaryDirectory() as directory:
                 result = self.run_workflow(
                     "a cinematic city skyline",
@@ -397,9 +430,10 @@ class GenerateImageTest(unittest.TestCase):
             result = self.run_workflow(
                 "a square icon",
                 "gpt-image-2",
-                "1024x1024",
+                "1:1",
                 directory,
                 "icon",
+                resolution="1K",
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             output = json.loads(result.stdout)
@@ -437,13 +471,13 @@ class GenerateImageTest(unittest.TestCase):
     def test_transient_failures_retry_up_to_three_attempts(self) -> None:
         MockCoderAPIHandler.failures_remaining = 2
         with tempfile.TemporaryDirectory() as directory:
-            result = self.run_workflow("a neon city", "gpt-image-2", "1024x1024", directory)
+            result = self.run_workflow("a neon city", "gpt-image-2", "1:1", directory)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(len(MockCoderAPIHandler.requests), 3)
 
     def test_three_failures_require_user_confirmation_before_another_round(self) -> None:
         MockCoderAPIHandler.failures_remaining = 3
-        state_path = self.prepare_ready_workflow("a neon city", "gpt-image-2", "1024x1024")
+        state_path = self.prepare_ready_workflow("a neon city", "gpt-image-2", "1:1")
         exhausted = self.run_skill("--generate", "--state", state_path)
         self.assertEqual(exhausted.returncode, 0, exhausted.stderr)
         workflow = json.loads(exhausted.stdout)
@@ -461,14 +495,14 @@ class GenerateImageTest(unittest.TestCase):
         self.assertEqual(len(MockCoderAPIHandler.requests), 4)
         self.assertFalse(Path(state_path).exists())
 
-    def test_timeout_cannot_exceed_1000_seconds(self) -> None:
-        allowed = self.run_skill("--begin", "--prompt", "a cat", "--timeout", "1000")
+    def test_timeout_cannot_exceed_300_seconds(self) -> None:
+        allowed = self.run_skill("--begin", "--prompt", "a cat", "--timeout", "300")
         self.assertEqual(allowed.returncode, 0, allowed.stderr)
         generator.remove_workflow_state(Path(json.loads(allowed.stdout)["state"]))
 
-        result = self.run_skill("--begin", "--prompt", "a cat", "--timeout", "1001")
+        result = self.run_skill("--begin", "--prompt", "a cat", "--timeout", "301")
         self.assertEqual(result.returncode, 1)
-        self.assertIn("between 1 and 1000 seconds", result.stderr)
+        self.assertIn("between 1 and 300 seconds", result.stderr)
 
     def test_configure_stores_chat_key_with_private_permissions_without_network_validation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -536,7 +570,7 @@ class GenerateImageTest(unittest.TestCase):
                     "prompt": "a square icon",
                     "status": "ready",
                     "model": "gpt-image-2",
-                    "layout": {"size": "1024x1024"},
+                    "layout": {"aspect_ratio": "1:1", "resolution": "1K"},
                     "local_key_saved": True,
                 },
             )

@@ -30,52 +30,48 @@ MAX_IMAGE_BYTES = 50 * 1024 * 1024
 CONFIG_ENV_VAR = "CODER_MEDIA_CONFIG_PATH"
 LEGACY_CONFIG_ENV_VAR = "CODER_API_CONFIG_PATH"
 WORKFLOW_STATE_VERSION = 2
-MAX_REQUEST_TIMEOUT_SECONDS = 1000
+MAX_REQUEST_TIMEOUT_SECONDS = 300
 MAX_GENERATION_ATTEMPTS = 3
 RETRY_DELAYS_SECONDS = (1, 2)
-GPT_IMAGE_2_SIZES = [
+IMAGE_ASPECT_RATIOS = [
     "auto",
-    "1024x1024",
-    "1024x1536",
-    "1536x1024",
-    "1024x1792",
-    "1792x1024",
-    "2048x2048",
-    "2560x1440",
-    "1440x2560",
-    "3840x2160",
-    "2160x3840",
+    "1:1",
+    "1:4",
+    "1:8",
+    "2:3",
+    "3:2",
+    "3:4",
+    "4:1",
+    "4:3",
+    "4:5",
+    "5:4",
+    "8:1",
+    "9:16",
+    "16:9",
+    "19.5:9",
+    "9:19.5",
+    "20:9",
+    "9:20",
+    "21:9",
 ]
-GPT_IMAGE_2_SIZE_LABELS = {
-    "auto": "auto (model selected)",
-    "1024x1024": "1024x1024 (1K)",
-    "1024x1536": "1024x1536 (about 1.5K)",
-    "1536x1024": "1536x1024 (about 1.5K)",
-    "1024x1792": "1024x1792 (about 1.8K)",
-    "1792x1024": "1792x1024 (about 1.8K)",
-    "2048x2048": "2048x2048 (2K)",
-    "2560x1440": "2560x1440 (about 2.5K)",
-    "1440x2560": "1440x2560 (about 2.5K)",
-    "3840x2160": "3840x2160 (4K)",
-    "2160x3840": "2160x3840 (4K)",
-}
-GPT_IMAGE_2_CAPABILITIES = {
+IMAGE_RESOLUTIONS = ["1K", "2K", "4K"]
+GPT_IMAGE_CAPABILITIES = {
     "provider": "openai",
-    "size_mode": "dimensions",
-    "sizes": GPT_IMAGE_2_SIZES,
-    "aspect_ratios": [],
-    "resolutions": [],
+    "size_mode": "aspect_ratio_resolution",
+    "sizes": [],
+    "aspect_ratios": IMAGE_ASPECT_RATIOS,
+    "resolutions": IMAGE_RESOLUTIONS,
     "qualities": ["auto", "low", "medium", "high"],
     "output_formats": ["png", "jpeg", "webp"],
-    "default_size": "1024x1024",
-    "default_aspect_ratio": "",
-    "default_resolution": "",
+    "default_size": "",
+    "default_aspect_ratio": "1:1",
+    "default_resolution": "1K",
     "default_quality": "auto",
     "default_output_format": "png",
     "supports_editing": True,
     "supports_moderation": True,
     "supports_output_compression": True,
-    "max_images": 4,
+    "max_images": 10,
 }
 
 GEMINI_NATIVE_IMAGE_ASPECT_RATIOS = [
@@ -134,35 +130,57 @@ XAI_IMAGE_CAPABILITIES = {
 MODEL_CATALOG: dict[str, dict[str, Any]] = {
     "gpt-image-2": {
         "label": "GPT Image 2",
-        "parameter": "size",
-        "options": GPT_IMAGE_2_SIZES,
-        "default": "1024x1024",
-        "option_labels": GPT_IMAGE_2_SIZE_LABELS,
-        "capabilities": GPT_IMAGE_2_CAPABILITIES,
+        "parameter": "aspect_ratio_resolution",
+        "options": IMAGE_ASPECT_RATIOS,
+        "default": "1:1",
+        "resolution_options": IMAGE_RESOLUTIONS,
+        "default_resolution": "1K",
+        "capabilities": GPT_IMAGE_CAPABILITIES,
     },
     "gpt-image-2.5": {
         "label": "GPT Image 2.5",
-        "parameter": "size",
-        "options": GPT_IMAGE_2_SIZES,
-        "default": "1024x1024",
-        "option_labels": GPT_IMAGE_2_SIZE_LABELS,
-        "capabilities": GPT_IMAGE_2_CAPABILITIES,
+        "parameter": "aspect_ratio_resolution",
+        "options": IMAGE_ASPECT_RATIOS,
+        "default": "1:1",
+        "resolution_options": IMAGE_RESOLUTIONS,
+        "default_resolution": "1K",
+        "capabilities": GPT_IMAGE_CAPABILITIES,
     },
     "gpt-image-2.5-flare": {
         "label": "GPT Image 2.5 Flare",
-        "parameter": "size",
-        "options": GPT_IMAGE_2_SIZES,
-        "default": "1024x1024",
-        "option_labels": GPT_IMAGE_2_SIZE_LABELS,
-        "capabilities": GPT_IMAGE_2_CAPABILITIES,
+        "parameter": "aspect_ratio_resolution",
+        "options": IMAGE_ASPECT_RATIOS,
+        "default": "1:1",
+        "resolution_options": IMAGE_RESOLUTIONS,
+        "default_resolution": "1K",
+        "capabilities": GPT_IMAGE_CAPABILITIES,
     },
     "gpt-image-2.5-sunburst": {
         "label": "GPT Image 2.5 Sunburst",
-        "parameter": "size",
-        "options": GPT_IMAGE_2_SIZES,
-        "default": "1024x1024",
-        "option_labels": GPT_IMAGE_2_SIZE_LABELS,
-        "capabilities": GPT_IMAGE_2_CAPABILITIES,
+        "parameter": "aspect_ratio_resolution",
+        "options": IMAGE_ASPECT_RATIOS,
+        "default": "1:1",
+        "resolution_options": IMAGE_RESOLUTIONS,
+        "default_resolution": "1K",
+        "capabilities": GPT_IMAGE_CAPABILITIES,
+    },
+    "gpt-image-2.6-flare": {
+        "label": "GPT Image 2.6 Flare",
+        "parameter": "aspect_ratio_resolution",
+        "options": IMAGE_ASPECT_RATIOS,
+        "default": "1:1",
+        "resolution_options": IMAGE_RESOLUTIONS,
+        "default_resolution": "1K",
+        "capabilities": GPT_IMAGE_CAPABILITIES,
+    },
+    "gpt-image-2.6-sunburst": {
+        "label": "GPT Image 2.6 Sunburst",
+        "parameter": "aspect_ratio_resolution",
+        "options": IMAGE_ASPECT_RATIOS,
+        "default": "1:1",
+        "resolution_options": IMAGE_RESOLUTIONS,
+        "default_resolution": "1K",
+        "capabilities": GPT_IMAGE_CAPABILITIES,
     },
     "gemini-3-pro-image-preview": {
         "label": "Gemini 3 Pro Image Preview",
@@ -234,6 +252,33 @@ MODEL_CATALOG: dict[str, dict[str, Any]] = {
         "default_resolution": "1K",
         "capabilities": XAI_IMAGE_CAPABILITIES,
     },
+    "grok-imagine-image": {
+        "label": "Grok Imagine Image",
+        "parameter": "aspect_ratio_resolution",
+        "options": XAI_IMAGE_ASPECT_RATIOS,
+        "default": "auto",
+        "resolution_options": XAI_IMAGE_RESOLUTIONS,
+        "default_resolution": "1K",
+        "capabilities": XAI_IMAGE_CAPABILITIES,
+    },
+    "grok-imagine-image-quality": {
+        "label": "Grok Imagine Image Quality",
+        "parameter": "aspect_ratio_resolution",
+        "options": XAI_IMAGE_ASPECT_RATIOS,
+        "default": "auto",
+        "resolution_options": XAI_IMAGE_RESOLUTIONS,
+        "default_resolution": "1K",
+        "capabilities": XAI_IMAGE_CAPABILITIES,
+    },
+    "grok-imagine-agent-mode": {
+        "label": "Grok Imagine Agent Mode",
+        "parameter": "aspect_ratio_resolution",
+        "options": XAI_IMAGE_ASPECT_RATIOS,
+        "default": "auto",
+        "resolution_options": XAI_IMAGE_RESOLUTIONS,
+        "default_resolution": "1K",
+        "capabilities": XAI_IMAGE_CAPABILITIES,
+    },
 }
 
 MIME_EXTENSIONS = {
@@ -292,9 +337,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prompt", help="image prompt")
     parser.add_argument("--image", help="local input image for a GPT Image 2 edit workflow")
     parser.add_argument("--model", choices=sorted(MODEL_CATALOG), help="explicit model choice")
-    parser.add_argument("--size", help="GPT Image 2 size")
-    parser.add_argument("--aspect-ratio", help="Gemini aspect ratio")
-    parser.add_argument("--resolution", help="Gemini image resolution")
+    parser.add_argument("--aspect-ratio", help="image aspect ratio")
+    parser.add_argument("--resolution", help="image resolution preset")
     parser.add_argument("--output-dir", default=".", help="directory for the generated file")
     parser.add_argument("--output", help="optional output filename")
     parser.add_argument(
@@ -347,21 +391,6 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
         "response_format": "b64_json",
     }
 
-    if config["parameter"] == "size":
-        if args.aspect_ratio or args.resolution:
-            raise SkillError(f"{model} uses --size, not --aspect-ratio or --resolution")
-        size = args.size
-        if not size:
-            raise SkillError(f"--size is required for {model}; select a layout through the workflow first")
-        if size not in config["options"]:
-            raise SkillError(f"unsupported size {size!r} for {model}")
-        payload["size"] = size
-        payload["quality"] = "auto"
-        payload["output_format"] = "png"
-        return payload
-
-    if args.size:
-        raise SkillError(f"{model} uses --aspect-ratio and --resolution, not --size")
     aspect_ratio = args.aspect_ratio
     if not aspect_ratio:
         raise SkillError(f"--aspect-ratio is required for {model}; select a layout through the workflow first")
@@ -374,6 +403,11 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
         raise SkillError(f"unsupported resolution {resolution!r} for {model}")
     payload["aspect_ratio"] = aspect_ratio
     payload["resolution"] = resolution
+    capabilities = config["capabilities"]
+    if capabilities["qualities"]:
+        payload["quality"] = capabilities["default_quality"]
+    if capabilities["output_formats"]:
+        payload["output_format"] = capabilities["default_output_format"]
     return payload
 
 
@@ -729,20 +763,11 @@ def selected_layout(model: Any, args: argparse.Namespace) -> dict[str, str]:
     if model not in MODEL_CATALOG:
         raise SkillError("workflow state has an invalid model")
     config = MODEL_CATALOG[model]
-    if config["parameter"] == "size":
-        if args.aspect_ratio or args.resolution:
-            raise SkillError(f"{model} uses --size, not --aspect-ratio or --resolution")
-        if args.size not in config["options"]:
-            raise SkillError(f"unsupported size {args.size!r} for {model}")
-        return {"size": args.size}
-    else:
-        if args.size:
-            raise SkillError(f"{model} uses --aspect-ratio and --resolution, not --size")
-        if args.aspect_ratio not in config["options"]:
-            raise SkillError(f"unsupported aspect ratio {args.aspect_ratio!r} for {model}")
-        if args.resolution not in config["resolution_options"]:
-            raise SkillError(f"unsupported resolution {args.resolution!r} for {model}")
-        return {"aspect_ratio": args.aspect_ratio, "resolution": args.resolution}
+    if args.aspect_ratio not in config["options"]:
+        raise SkillError(f"unsupported aspect ratio {args.aspect_ratio!r} for {model}")
+    if args.resolution not in config["resolution_options"]:
+        raise SkillError(f"unsupported resolution {args.resolution!r} for {model}")
+    return {"aspect_ratio": args.aspect_ratio, "resolution": args.resolution}
 
 
 def select_workflow_configuration(args: argparse.Namespace) -> dict[str, Any]:
@@ -1121,7 +1146,6 @@ def main() -> int:
         generation_args = argparse.Namespace(
             prompt=state["prompt"],
             model=state.get("model"),
-            size=layout.get("size"),
             aspect_ratio=layout.get("aspect_ratio"),
             resolution=layout.get("resolution"),
             timeout=args.timeout,
