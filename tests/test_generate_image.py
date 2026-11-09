@@ -221,6 +221,7 @@ class GenerateImageTest(unittest.TestCase):
             self.assertEqual(request["aspect_ratio"], "1:1")
             self.assertEqual(request["resolution"], "1K")
             self.assertNotIn("size", request)
+            self.assertNotIn("output_format", request)
             self.assertEqual(request["response_format"], "b64_json")
             self.assertEqual(request["_image_bytes"], PNG_BYTES)
             self.assertEqual(request["_image_content_type"], "image/png")
@@ -361,7 +362,7 @@ class GenerateImageTest(unittest.TestCase):
                 self.assertEqual(payload["resolution"], "2K")
                 self.assertNotIn("size", payload)
                 self.assertEqual(payload["quality"], "auto")
-                self.assertEqual(payload["output_format"], "png")
+                self.assertNotIn("output_format", payload)
 
     def test_gemini_model_name_and_resolution_are_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

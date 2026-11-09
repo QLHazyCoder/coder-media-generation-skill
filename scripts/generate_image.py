@@ -411,8 +411,6 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
     capabilities = config["capabilities"]
     if capabilities["qualities"]:
         payload["quality"] = capabilities["default_quality"]
-    if capabilities["output_formats"]:
-        payload["output_format"] = capabilities["default_output_format"]
     return payload
 
 
