@@ -55,11 +55,16 @@ IMAGE_ASPECT_RATIOS = [
     "21:9",
 ]
 IMAGE_RESOLUTIONS = ["1K", "2K", "4K"]
+GPT_IMAGE_ASPECT_RATIOS = [
+    ratio
+    for ratio in IMAGE_ASPECT_RATIOS
+    if ratio not in {"1:4", "4:1", "1:8", "8:1"}
+]
 GPT_IMAGE_CAPABILITIES = {
     "provider": "openai",
     "size_mode": "aspect_ratio_resolution",
     "sizes": [],
-    "aspect_ratios": IMAGE_ASPECT_RATIOS,
+    "aspect_ratios": GPT_IMAGE_ASPECT_RATIOS,
     "resolutions": IMAGE_RESOLUTIONS,
     "qualities": ["auto", "low", "medium", "high"],
     "output_formats": ["png", "jpeg", "webp"],
@@ -131,7 +136,7 @@ MODEL_CATALOG: dict[str, dict[str, Any]] = {
     "gpt-image-2": {
         "label": "GPT Image 2",
         "parameter": "aspect_ratio_resolution",
-        "options": IMAGE_ASPECT_RATIOS,
+        "options": GPT_IMAGE_ASPECT_RATIOS,
         "default": "1:1",
         "resolution_options": IMAGE_RESOLUTIONS,
         "default_resolution": "1K",
@@ -140,7 +145,7 @@ MODEL_CATALOG: dict[str, dict[str, Any]] = {
     "gpt-image-2.5": {
         "label": "GPT Image 2.5",
         "parameter": "aspect_ratio_resolution",
-        "options": IMAGE_ASPECT_RATIOS,
+        "options": GPT_IMAGE_ASPECT_RATIOS,
         "default": "1:1",
         "resolution_options": IMAGE_RESOLUTIONS,
         "default_resolution": "1K",
@@ -149,7 +154,7 @@ MODEL_CATALOG: dict[str, dict[str, Any]] = {
     "gpt-image-2.5-flare": {
         "label": "GPT Image 2.5 Flare",
         "parameter": "aspect_ratio_resolution",
-        "options": IMAGE_ASPECT_RATIOS,
+        "options": GPT_IMAGE_ASPECT_RATIOS,
         "default": "1:1",
         "resolution_options": IMAGE_RESOLUTIONS,
         "default_resolution": "1K",
@@ -158,7 +163,7 @@ MODEL_CATALOG: dict[str, dict[str, Any]] = {
     "gpt-image-2.5-sunburst": {
         "label": "GPT Image 2.5 Sunburst",
         "parameter": "aspect_ratio_resolution",
-        "options": IMAGE_ASPECT_RATIOS,
+        "options": GPT_IMAGE_ASPECT_RATIOS,
         "default": "1:1",
         "resolution_options": IMAGE_RESOLUTIONS,
         "default_resolution": "1K",
@@ -167,7 +172,7 @@ MODEL_CATALOG: dict[str, dict[str, Any]] = {
     "gpt-image-2.6-flare": {
         "label": "GPT Image 2.6 Flare",
         "parameter": "aspect_ratio_resolution",
-        "options": IMAGE_ASPECT_RATIOS,
+        "options": GPT_IMAGE_ASPECT_RATIOS,
         "default": "1:1",
         "resolution_options": IMAGE_RESOLUTIONS,
         "default_resolution": "1K",
@@ -176,7 +181,7 @@ MODEL_CATALOG: dict[str, dict[str, Any]] = {
     "gpt-image-2.6-sunburst": {
         "label": "GPT Image 2.6 Sunburst",
         "parameter": "aspect_ratio_resolution",
-        "options": IMAGE_ASPECT_RATIOS,
+        "options": GPT_IMAGE_ASPECT_RATIOS,
         "default": "1:1",
         "resolution_options": IMAGE_RESOLUTIONS,
         "default_resolution": "1K",

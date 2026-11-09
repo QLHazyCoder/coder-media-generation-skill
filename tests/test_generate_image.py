@@ -252,8 +252,10 @@ class GenerateImageTest(unittest.TestCase):
     def test_gpt_image_2_exposes_unified_layout_options(self) -> None:
         catalog = next(item for item in generator.model_catalog_for_output() if item["model"] == "gpt-image-2")
         self.assertEqual(catalog["parameter"], "aspect_ratio_resolution")
-        self.assertEqual(catalog["options"], generator.IMAGE_ASPECT_RATIOS)
+        self.assertEqual(catalog["options"], generator.GPT_IMAGE_ASPECT_RATIOS)
         self.assertEqual(catalog["resolution_options"], ["1K", "2K", "4K"])
+        for unsupported in ["1:4", "4:1", "1:8", "8:1"]:
+            self.assertNotIn(unsupported, catalog["options"])
 
         begin = self.run_skill("--begin", "--prompt", "a landscape scene")
         state_path = json.loads(begin.stdout)["state"]
@@ -324,7 +326,7 @@ class GenerateImageTest(unittest.TestCase):
         ]:
             model = by_model[model_name]
             self.assertEqual(model["parameter"], "aspect_ratio_resolution")
-            self.assertEqual(model["options"], generator.IMAGE_ASPECT_RATIOS)
+            self.assertEqual(model["options"], generator.GPT_IMAGE_ASPECT_RATIOS)
             self.assertEqual(model["resolution_options"], ["1K", "2K", "4K"])
             self.assertEqual(model["capabilities"], generator.GPT_IMAGE_CAPABILITIES)
         for model_name in [
